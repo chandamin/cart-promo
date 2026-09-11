@@ -1,0 +1,25 @@
+# Learn more about configuring your checkout UI extension:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-07"
+
+[[extensions]]
+name = "CartPromo Free Gift"
+handle = "gift-checkout-ext"
+type = "ui_extension"
+uid = "84b9a50f-d609-7e44-c4cd-ea97641552df30827b9c"
+
+# Controls where in Shopify your extension will be injected,
+# and the file that contains your extension’s source code. Learn more:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/extension-targets-overview
+
+[[extensions.targeting]]
+module = "./src/Checkout.jsx"
+target = "purchase.checkout.block.render"
+
+[extensions.capabilities]
+# Needed to call our app proxy (/apps/cartpromo/gift-rules) to decide which
+# gift(s) currently qualify and to add/remove the gift cart line.
+network_access = true
