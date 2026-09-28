@@ -44,6 +44,10 @@ api_version = "2026-10"
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/discounts/delete"
+  topics = [ "discounts/delete" ]
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 

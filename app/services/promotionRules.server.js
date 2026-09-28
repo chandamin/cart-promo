@@ -178,6 +178,21 @@ export async function deleteRule(shop, id) {
   return prisma.promotionRule.delete({ where: { id } });
 }
 
+/**
+ * Called when a discount is deleted in Shopify admin: removes the rule that
+ * owns it so the app never shows (or offers gifts for) a rule with no live
+ * discount behind it.
+ *
+ * Only ACTIVE rules are removed. Deactivating a rule (DRAFT/DISABLED) also
+ * deletes its Shopify discount, and that delete fires the same webhook; the
+ * status is changed before the delete, so those rules are left alone.
+ */
+export async function deleteRuleByShopifyDiscountId(shop, shopifyDiscountId) {
+  return prisma.promotionRule.deleteMany({
+    where: { shop, shopifyDiscountId, status: "ACTIVE" },
+  });
+}
+
 export async function setStatus(shop, id, status) {
   if (!RULE_STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
