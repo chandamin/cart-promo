@@ -53,29 +53,27 @@ function Extension() {
 
       const staleLines = giftLines.filter((line) => {
         const ruleId = line.attributes.find((a) => a.key === ATTRIBUTE_KEY)?.value;
-        return !ruleId || !qualifyingRuleIds.includes(ruleId);
+        if (ruleId && qualifyingRuleIds.includes(ruleId)) return false;
+        // Older storefront lines stored the variant gid instead of the rule id.
+        return !result.qualifying.some((q) =>
+          q.gifts.some((g) => g.variantId === line.merchandise?.id),
+        );
       });
 
       for (const line of staleLines) {
         await shopify.applyCartLinesChange({ type: "removeCartLine", id: line.id, quantity: line.quantity });
       }
 
+      // Never auto-add: a qualifying gift always waits for the customer to
+      // confirm via the banner below, whether there's one option or several.
+      const remainingLines = currentLines.filter((l) => !staleLines.includes(l));
       let nextPicker = null;
       for (const q of result.qualifying) {
         const alreadyHasOne = q.gifts.some((g) =>
-          currentLines.some((l) => l.merchandise?.id === g.variantId),
+          remainingLines.some((l) => l.merchandise?.id === g.variantId),
         );
-        if (alreadyHasOne) continue;
-        if (q.gifts.length === 1) {
-          await shopify.applyCartLinesChange({
-            type: "addCartLine",
-            merchandiseId: q.gifts[0].variantId,
-            quantity: 1,
-            attributes: [{ key: ATTRIBUTE_KEY, value: q.ruleId }],
-          });
-        } else if (!nextPicker) {
-          nextPicker = q;
-        }
+        if (alreadyHasOne || nextPicker) continue;
+        nextPicker = q;
       }
       if (!cancelled) setPickerRule(nextPicker);
     }
@@ -101,12 +99,14 @@ function Extension() {
     setPickerRule(null);
   }
 
+  const isMulti = pickerRule.gifts.length > 1;
+
   return (
-    <s-banner heading="Choose your free gift" tone="info">
+    <s-banner heading={isMulti ? "Choose your free gift" : "You qualify for a free gift!"} tone="info">
       <s-stack gap="base">
         {pickerRule.gifts.map((gift) => (
           <s-button key={gift.variantId} disabled={busy} onClick={() => pick(gift.variantId)}>
-            {gift.title}
+            {isMulti ? gift.title : `Add ${gift.title} to cart`}
           </s-button>
         ))}
       </s-stack>

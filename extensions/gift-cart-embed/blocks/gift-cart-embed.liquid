@@ -1,10 +1,140 @@
-<div data-cartpromo-gift-embed style="display:none"></div>
+<div
+  data-cartpromo-gift-embed
+  data-settings="{{ block.settings | json | escape }}"
+  style="display:none"
+></div>
 <script src="{{ 'gift-cart-embed.js' | asset_url }}" defer="defer"></script>
 
 {% schema %}
 {
   "name": "CartPromo free gifts",
   "target": "body",
-  "settings": []
+  "settings": [
+    {
+      "type": "header",
+      "content": "Text"
+    },
+    {
+      "type": "text",
+      "id": "eyebrow_text",
+      "label": "Eyebrow text",
+      "default": "Free Gift"
+    },
+    {
+      "type": "text",
+      "id": "heading_text",
+      "label": "Heading",
+      "default": "Your Complimentary Gift"
+    },
+    {
+      "type": "text",
+      "id": "subtext",
+      "label": "Subtext",
+      "default": "Add it to your bag below — on the house."
+    },
+    {
+      "type": "text",
+      "id": "yours_free_text",
+      "label": "\"Yours, free\" label",
+      "default": "Yours, Free"
+    },
+    {
+      "type": "text",
+      "id": "button_text",
+      "label": "Button text",
+      "default": "Add to cart"
+    },
+    {
+      "type": "text",
+      "id": "continue_text",
+      "label": "Dismiss link text",
+      "default": "Continue shopping"
+    },
+    {
+      "type": "header",
+      "content": "Colors"
+    },
+    {
+      "type": "color",
+      "id": "background_color",
+      "label": "Modal background",
+      "default": "#FAF6EF"
+    },
+    {
+      "type": "color",
+      "id": "eyebrow_color",
+      "label": "Eyebrow color",
+      "default": "#B08D57"
+    },
+    {
+      "type": "color",
+      "id": "heading_color",
+      "label": "Heading color",
+      "default": "#2B2620"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "Body text color",
+      "default": "#6B6259"
+    },
+    {
+      "type": "color",
+      "id": "button_background_color",
+      "label": "Button background",
+      "default": "#B08D57"
+    },
+    {
+      "type": "color",
+      "id": "button_text_color",
+      "label": "Button text",
+      "default": "#FFFFFF"
+    },
+    {
+      "type": "color",
+      "id": "overlay_color",
+      "label": "Overlay color",
+      "default": "#000000"
+    },
+    {
+      "type": "range",
+      "id": "overlay_opacity",
+      "label": "Overlay opacity",
+      "min": 0,
+      "max": 90,
+      "step": 5,
+      "unit": "%",
+      "default": 50
+    },
+    {
+      "type": "header",
+      "content": "Shape"
+    },
+    {
+      "type": "range",
+      "id": "corner_radius",
+      "label": "Corner radius",
+      "min": 0,
+      "max": 24,
+      "step": 1,
+      "unit": "px",
+      "default": 4
+    },
+    {
+      "type": "header",
+      "content": "Cart updates"
+    },
+    {
+      "type": "select",
+      "id": "cart_refresh",
+      "label": "When a gift is added or removed",
+      "options": [
+        { "value": "auto", "label": "Update the cart automatically" },
+        { "value": "reload", "label": "Reload the page" }
+      ],
+      "default": "auto",
+      "info": "Choose \"Reload the page\" if your theme's cart drawer doesn't show the gift change."
+    }
+  ]
 }
 {% endschema %}

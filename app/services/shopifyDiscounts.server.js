@@ -165,26 +165,50 @@ export async function syncShopifyDiscount(admin, rule) {
   if (rule.discountMethod === "CODE") {
     discountInput.code = rule.code;
     if (rule.shopifyDiscountId) {
-      const result = await run(admin, CODE_UPDATE, { id: rule.shopifyDiscountId, discount: discountInput });
-      return result.codeAppDiscount.discountId;
+      try {
+        const result = await run(admin, CODE_UPDATE, { id: rule.shopifyDiscountId, discount: discountInput });
+        return result.codeAppDiscount.discountId;
+      } catch (error) {
+        // Stale id: clean up whatever it points to, then create a fresh discount.
+        if (!isMissingDiscountError(error)) throw error;
+        await removeShopifyDiscount(admin, rule);
+      }
     }
     const result = await run(admin, CODE_CREATE, { discount: discountInput });
     return result.codeAppDiscount.discountId;
   }
 
   if (rule.shopifyDiscountId) {
-    const result = await run(admin, AUTOMATIC_UPDATE, { id: rule.shopifyDiscountId, discount: discountInput });
-    return result.automaticAppDiscount.discountId;
+    try {
+      const result = await run(admin, AUTOMATIC_UPDATE, { id: rule.shopifyDiscountId, discount: discountInput });
+      return result.automaticAppDiscount.discountId;
+    } catch (error) {
+      if (!isMissingDiscountError(error)) throw error;
+      await removeShopifyDiscount(admin, rule);
+    }
   }
   const result = await run(admin, AUTOMATIC_CREATE, { discount: discountInput });
   return result.automaticAppDiscount.discountId;
 }
 
+function isMissingDiscountError(error) {
+  return /does not exist|not found/i.test(error?.message ?? "");
+}
+
+// Idempotent: the discount may already be gone (deleted in Shopify admin), or
+// the stored id may be of the other kind if the rule's method was changed.
 export async function removeShopifyDiscount(admin, rule) {
   if (!rule.shopifyDiscountId) return;
-  if (rule.discountMethod === "CODE") {
-    await run(admin, CODE_DELETE, { id: rule.shopifyDiscountId });
-  } else {
-    await run(admin, AUTOMATIC_DELETE, { id: rule.shopifyDiscountId });
+  const [primary, fallback] =
+    rule.discountMethod === "CODE" ? [CODE_DELETE, AUTOMATIC_DELETE] : [AUTOMATIC_DELETE, CODE_DELETE];
+  try {
+    await run(admin, primary, { id: rule.shopifyDiscountId });
+  } catch (error) {
+    if (!isMissingDiscountError(error)) throw error;
+    try {
+      await run(admin, fallback, { id: rule.shopifyDiscountId });
+    } catch (fallbackError) {
+      if (!isMissingDiscountError(fallbackError)) throw fallbackError;
+    }
   }
 }

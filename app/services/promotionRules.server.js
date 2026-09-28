@@ -48,7 +48,8 @@ function validateTieredConfig(config) {
   }
   let lastThreshold = -Infinity;
   for (const tier of [...config.tiers].sort((a, b) => a.threshold - b.threshold)) {
-    if (!(tier.threshold > lastThreshold)) {
+    // A blank threshold arrives as 0, which would make the tier always apply.
+    if (!(tier.threshold > 0) || !(tier.threshold > lastThreshold)) {
       throw new Error("Tier thresholds must be positive and strictly increasing.");
     }
     if (!["PERCENTAGE", "FIXED_AMOUNT"].includes(tier.rewardType)) {
@@ -56,6 +57,9 @@ function validateTieredConfig(config) {
     }
     if (!(tier.value > 0)) {
       throw new Error("Tier reward value must be greater than zero.");
+    }
+    if (tier.rewardType === "PERCENTAGE" && tier.value > 100) {
+      throw new Error("A percentage tier can't be more than 100% off.");
     }
     lastThreshold = tier.threshold;
   }
@@ -84,6 +88,20 @@ function validateRuleInput(input) {
   }
   validateTriggers(input.triggers);
   CONFIG_VALIDATORS[input.type](input.config);
+  if (input.type === "TIERED_DISCOUNT") {
+    validateNoExcludedTriggers(input.triggers, input.config.exclusions);
+  }
+}
+
+// An excluded product never counts toward tiers, so excluding a product that is
+// itself a trigger makes the rule silently unreachable for it.
+function validateNoExcludedTriggers(triggers, exclusions = []) {
+  const excluded = new Set(exclusions.filter((e) => e.kind === "PRODUCT").map((e) => e.id));
+  const overlap = triggers.filter((t) => t.kind === "PRODUCT" && excluded.has(t.id));
+  if (overlap.length) {
+    const names = overlap.map((t) => t.title ?? t.id).join(", ");
+    throw new Error(`These products are both a cart condition and excluded: ${names}`);
+  }
 }
 
 function toRecord(input) {
@@ -114,9 +132,20 @@ export async function listRules(shop) {
   });
 }
 
+// Also honors the schedule, matching when Shopify actually runs the discount —
+// otherwise the storefront would add a gift the Function won't make free yet.
 export async function listActiveRules(shop, type) {
+  const now = new Date();
   return prisma.promotionRule.findMany({
-    where: { shop, type, status: "ACTIVE" },
+    where: {
+      shop,
+      type,
+      status: "ACTIVE",
+      AND: [
+        { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+        { OR: [{ endsAt: null }, { endsAt: { gt: now } }] },
+      ],
+    },
   });
 }
 
