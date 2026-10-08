@@ -3,11 +3,12 @@ import { useFetcher, useLoaderData, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { listRules } from "../services/promotionRules.server";
-import { changeRuleStatus, removeRule } from "../services/promotions.server";
+import { changeRuleStatus, pruneDeletedDiscounts, removeRule } from "../services/promotions.server";
+import { editPath } from "../utils/promotionPaths";
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
-  const rules = await listRules(session.shop);
+  const { session, admin } = await authenticate.admin(request);
+  const rules = await pruneDeletedDiscounts(admin, session.shop, await listRules(session.shop));
   return { rules };
 };
 
@@ -40,11 +41,6 @@ const TYPE_LABEL = {
   TIERED_DISCOUNT: "Tiered discount",
 };
 
-const TYPE_PATH = {
-  FREE_GIFT: "free-gift",
-  TIERED_DISCOUNT: "tiered",
-};
-
 const STATUS_TONE = {
   ACTIVE: "success",
   DRAFT: "neutral",
@@ -64,10 +60,6 @@ export default function PromotionsIndex() {
       shopify.toast.show(fetcher.data.error, { isError: true });
     }
   }, [fetcher.data, shopify]);
-
-  function editHref(rule) {
-    return `/app/promotions/${TYPE_PATH[rule.type]}/${rule.id}`;
-  }
 
   function toggleStatus(rule) {
     const nextStatus = rule.status === "ACTIVE" ? "DISABLED" : "ACTIVE";
@@ -101,6 +93,7 @@ export default function PromotionsIndex() {
             <s-table-header-row>
               <s-table-header>Name</s-table-header>
               <s-table-header>Type</s-table-header>
+              <s-table-header>Tags</s-table-header>
               <s-table-header>Method</s-table-header>
               <s-table-header>Status</s-table-header>
               <s-table-header></s-table-header>
@@ -109,9 +102,16 @@ export default function PromotionsIndex() {
               {rules.map((rule) => (
                 <s-table-row key={rule.id}>
                   <s-table-cell>
-                    <s-link href={editHref(rule)}>{rule.name}</s-link>
+                    <s-link href={editPath(rule)}>{rule.name}</s-link>
                   </s-table-cell>
                   <s-table-cell>{TYPE_LABEL[rule.type]}</s-table-cell>
+                  <s-table-cell>
+                    <s-stack direction="inline" gap="small-400">
+                      {(rule.tags ?? []).map((tag) => (
+                        <s-badge key={tag}>{tag}</s-badge>
+                      ))}
+                    </s-stack>
+                  </s-table-cell>
                   <s-table-cell>
                     {rule.discountMethod === "CODE" ? `Code: ${rule.code}` : "Automatic"}
                   </s-table-cell>

@@ -48,6 +48,12 @@ model PromotionRule {
   triggers          Json // [{ kind, ids: [], minQuantity }]
   triggerMatch      String    @default("ANY") // ANY | ALL
   config            Json // type-specific payload
+  minRequirement    Json? // { type: "NONE" | "AMOUNT" | "QUANTITY", value }
+  eligibility       Json? // { type: "ALL" | "SEGMENTS" | "CUSTOMERS", segments: [], customers: [] }
+  usageLimit        Int? // CODE only: total redemptions
+  oncePerCustomer   Boolean   @default(false) // CODE only
+  tags              Json? // string[], synced to the Shopify discount
+  cartLabel         String? // label shown on cart/checkout lines; defaults to name
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

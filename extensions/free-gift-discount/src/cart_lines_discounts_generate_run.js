@@ -12,7 +12,10 @@ import { DiscountClass, ProductDiscountSelectionStrategy } from "../generated/ap
  *   triggerMatch: "ANY" | "ALL",
  *   triggers: [{ kind: "PRODUCT" | "COLLECTION", id: string, minQuantity: number }],
  *   giftVariantIds: string[],
+ *   minRequirement: { type: "AMOUNT" | "QUANTITY", value: number } | null,
+ *   label: string, // shown on the cart/checkout line
  * }
+ * `triggers` may be empty when `minRequirement` alone decides eligibility.
  *
  * Collection membership can't be resolved per-condition inside a single static
  * input query (Product.inAnyCollection only returns one OR'd boolean across the
@@ -33,7 +36,7 @@ export function cartLinesDiscountsGenerateRun(input) {
   }
 
   const config = parseConfig(input.discount.metafield?.value);
-  if (!config || !config.giftVariantIds?.length || !config.triggers?.length) {
+  if (!config || !config.giftVariantIds?.length || (!config.triggers?.length && !config.minRequirement)) {
     return { operations: [] };
   }
 
@@ -46,10 +49,12 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
+  // Gift lines (this rule's, or any other CartPromo gift) never count toward
+  // the conditions: a free product must not unlock its own reward.
   const giftLineIds = new Set(giftLines.map((line) => line.id));
-  const otherLines = input.cart.lines.filter((line) => !giftLineIds.has(line.id));
+  const otherLines = input.cart.lines.filter((line) => !giftLineIds.has(line.id) && !line.giftRule);
 
-  if (!isTriggerSatisfied(config, otherLines)) {
+  if (!isTriggerSatisfied(config, otherLines) || !meetsMinRequirement(config.minRequirement, otherLines)) {
     return { operations: [] };
   }
 
@@ -59,7 +64,7 @@ export function cartLinesDiscountsGenerateRun(input) {
         productDiscountsAdd: {
           candidates: [
             {
-              message: "Free gift",
+              message: config.label || "Free gift",
               targets: giftLines.map((line) => ({ cartLine: { id: line.id } })),
               value: { percentage: { value: 100 } },
             },
@@ -88,8 +93,24 @@ function lineMatchesCondition(line, condition) {
   return line.merchandise.product.inTriggerCollection;
 }
 
+// Minimum purchase requirement over the (non-gift) cart: subtotal before
+// discounts, or total item quantity.
+function meetsMinRequirement(minRequirement, lines) {
+  if (!minRequirement) return true;
+  if (minRequirement.type === "AMOUNT") {
+    const subtotal = lines.reduce((sum, line) => sum + Number(line.cost.subtotalAmount.amount), 0);
+    return subtotal >= minRequirement.value;
+  }
+  if (minRequirement.type === "QUANTITY") {
+    return lines.reduce((sum, line) => sum + line.quantity, 0) >= minRequirement.value;
+  }
+  return true;
+}
+
 function isTriggerSatisfied(config, lines) {
   const { triggers, triggerMatch } = config;
+  // No cart conditions: the minimum purchase requirement alone decides.
+  if (!triggers?.length) return true;
   const conditionQuantity = (condition) =>
     lines
       .filter((line) => lineMatchesCondition(line, condition))

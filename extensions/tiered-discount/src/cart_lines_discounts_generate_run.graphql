@@ -3,6 +3,9 @@ query CartInput($triggerCollectionIds: [ID!], $excludedCollectionIds: [ID!]) {
     lines {
       id
       quantity
+      giftRule: attribute(key: "_cartpromo_rule") {
+        value
+      }
       cost {
         subtotalAmount {
           amount

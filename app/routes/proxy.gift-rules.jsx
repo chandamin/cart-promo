@@ -19,10 +19,20 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const cartLines = safeParse(url.searchParams.get("lines"), []);
   const appliedCodes = safeParse(url.searchParams.get("codes"), []);
+  // Storefront: Shopify adds the signed `logged_in_customer_id` to proxy
+  // requests. Checkout can't send cookies, so the extension passes the id.
+  const customerId = toCustomerGid(
+    url.searchParams.get("logged_in_customer_id") || url.searchParams.get("customer_id"),
+  );
 
-  const result = await evaluateGiftRules(admin, session.shop, cartLines, appliedCodes);
+  const result = await evaluateGiftRules(admin, session.shop, cartLines, appliedCodes, customerId);
   return Response.json(result);
 };
+
+function toCustomerGid(raw) {
+  if (!raw) return null;
+  return raw.startsWith("gid://") ? raw : `gid://shopify/Customer/${raw}`;
+}
 
 function safeParse(raw, fallback) {
   try {

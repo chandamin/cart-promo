@@ -27,6 +27,8 @@ function Extension() {
           productId: l.merchandise?.product?.id,
           variantId: l.merchandise?.id,
           quantity: l.quantity,
+          amount: Number(l.cost?.totalAmount?.amount ?? 0),
+          isGift: Boolean(l.attributes?.some((a) => a.key === ATTRIBUTE_KEY)),
         }))
         .filter((l) => l.productId && l.variantId);
 
@@ -36,6 +38,10 @@ function Extension() {
         "codes",
         JSON.stringify(shopify.discountCodes.value.map((d) => d.code)),
       );
+      // For customer/segment eligibility; unavailable for guests or without
+      // protected customer data access, in which case only "All customers" rules apply.
+      const customerId = shopify.buyerIdentity?.customer?.value?.id;
+      if (customerId) url.searchParams.set("customer_id", customerId);
 
       let result;
       try {

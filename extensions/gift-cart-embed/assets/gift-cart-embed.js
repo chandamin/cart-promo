@@ -61,8 +61,48 @@
         productId: toGid("Product", item.product_id),
         variantId: toGid("ProductVariant", item.variant_id),
         quantity: item.quantity,
+        // Before discounts, like the Function's subtotalAmount (cart.js uses cents).
+        amount: item.original_line_price / 100,
+        isGift: Boolean(item.properties && item.properties[PROPERTY_KEY]),
       };
     });
+  }
+
+  // --- Popup dismissal -------------------------------------------------------
+  // When the customer closes the popup without taking the gift, don't show it
+  // again on every page load: only once the cart's (non-gift) products change.
+  var DISMISS_KEY = "cartpromo:gift-dismissed";
+
+  function cartSignature(cart) {
+    return cart.items
+      .filter(function (item) {
+        return !(item.properties && item.properties[PROPERTY_KEY]);
+      })
+      .map(function (item) {
+        return item.variant_id + ":" + item.quantity;
+      })
+      .sort()
+      .join(",");
+  }
+
+  function dismissKey(ruleId, cart) {
+    return ruleId + "|" + cartSignature(cart);
+  }
+
+  function isDismissed(ruleId, cart) {
+    try {
+      return window.localStorage.getItem(DISMISS_KEY) === dismissKey(ruleId, cart);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function rememberDismissal(ruleId, cart) {
+    try {
+      window.localStorage.setItem(DISMISS_KEY, dismissKey(ruleId, cart));
+    } catch (e) {
+      // Storage unavailable (private mode, blocked): popup just shows again.
+    }
   }
 
   function fetchQualifyingRules(cart) {
@@ -120,14 +160,6 @@
     return new DOMParser().parseFromString(html, "text/html");
   }
 
-  // Id of the section wrapping `el` (for Section Rendering API), or `fallback`
-  // when the element is rendered outside a section (e.g. from the layout).
-  function sectionIdOf(el, fallback) {
-    var section = el && el.closest(".shopify-section");
-    var prefix = "shopify-section-";
-    return section && section.id.indexOf(prefix) === 0 ? section.id.slice(prefix.length) : fallback;
-  }
-
   function fetchSections(ids) {
     return fetch(rootUrl() + "?sections=" + ids.map(encodeURIComponent).join(","))
       .then(function (r) {
@@ -142,11 +174,14 @@
   // Mirrors Dawn's own renderContents. We deliberately don't publish Dawn's
   // cartUpdate pub/sub event: some Dawn versions handle it by injecting the
   // cart *page* markup into the drawer.
+  // Uses Dawn's dedicated `cart-drawer` / `cart-icon-bubble` sections. Don't
+  // derive ids from the wrapping .shopify-section: the bubble lives inside the
+  // header section, and rendering that into the bubble duplicates the header.
   function refreshDawnCart(cart) {
     var drawer = document.querySelector("cart-drawer");
     var bubble = document.getElementById("cart-icon-bubble");
-    var drawerSection = drawer && drawer.querySelector(".drawer__inner") ? sectionIdOf(drawer, "cart-drawer") : null;
-    var bubbleSection = bubble ? sectionIdOf(bubble, "cart-icon-bubble") : null;
+    var drawerSection = drawer && drawer.querySelector(".drawer__inner") ? "cart-drawer" : null;
+    var bubbleSection = bubble ? "cart-icon-bubble" : null;
     var ids = [drawerSection, bubbleSection].filter(Boolean);
     if (!ids.length) return Promise.resolve(false);
 
@@ -219,8 +254,11 @@
     }
   }
 
+  // Set while the popup is open: closes it as a customer "no thanks".
+  var dismissModal = closeModal;
+
   function onKeydown(e) {
-    if (e.key === "Escape") closeModal();
+    if (e.key === "Escape") dismissModal();
   }
 
   function giftCard(gift, s, onPick) {
@@ -273,9 +311,13 @@
     return card;
   }
 
-  function showModal(rule, onPick) {
+  function showModal(rule, onPick, onDismiss) {
     closeModal();
     var s = getSettings();
+    dismissModal = function () {
+      closeModal();
+      if (onDismiss) onDismiss();
+    };
 
     var overlay = document.createElement("div");
     overlay.style.cssText =
@@ -283,7 +325,7 @@
       hexToRgba(s.overlay_color, s.overlay_opacity) +
       ";display:flex;align-items:center;justify-content:center;padding:16px;";
     overlay.addEventListener("click", function (e) {
-      if (e.target === overlay) closeModal();
+      if (e.target === overlay) dismissModal();
     });
 
     var card = document.createElement("div");
@@ -303,7 +345,7 @@
       "position:absolute;top:12px;right:14px;border:none;background:none;color:" +
       s.text_color +
       ";font-size:20px;line-height:1;cursor:pointer;";
-    closeBtn.addEventListener("click", closeModal);
+    closeBtn.addEventListener("click", dismissModal);
     card.appendChild(closeBtn);
 
     var eyebrow = document.createElement("div");
@@ -347,7 +389,7 @@
       "border:none;background:none;color:" +
       s.text_color +
       ";text-decoration:underline;font-size:13px;cursor:pointer;margin-top:4px;";
-    continueLink.addEventListener("click", closeModal);
+    continueLink.addEventListener("click", dismissModal);
     card.appendChild(continueLink);
 
     overlay.appendChild(card);
@@ -415,7 +457,8 @@
               return line.variant_id === Number(g.variantId.split("/").pop());
             });
           });
-          if (alreadyHasOne || showFor) return;
+          // Declined for this exact cart: wait for a product change.
+          if (alreadyHasOne || showFor || isDismissed(q.ruleId, cart)) return;
           showFor = q;
         });
 
@@ -426,16 +469,22 @@
           });
         });
         return chain.then(function () {
-          return { changed: toRemove.length > 0, showFor: showFor };
+          return { changed: toRemove.length > 0, showFor: showFor, cart: cart };
         });
       })
       .then(function (outcome) {
         finishSync();
         if (outcome.showFor) {
           var ruleId = outcome.showFor.ruleId;
-          showModal(outcome.showFor, function (variantId) {
-            addGift(variantId, ruleId).then(refreshCartUI).then(sync);
-          });
+          showModal(
+            outcome.showFor,
+            function (variantId) {
+              addGift(variantId, ruleId).then(refreshCartUI).then(sync);
+            },
+            function () {
+              rememberDismissal(ruleId, outcome.cart);
+            },
+          );
         } else {
           closeModal();
         }

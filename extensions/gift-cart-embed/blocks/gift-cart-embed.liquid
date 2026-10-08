@@ -5,6 +5,26 @@
 ></div>
 <script src="{{ 'gift-cart-embed.js' | asset_url }}" defer="defer"></script>
 
+{%- if block.settings.style_discount_badges -%}
+  {%- comment -%} Discount labels on cart lines (Dawn and Dawn-based themes). {%- endcomment -%}
+  <style>
+    .discounts__discount {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.8rem;
+      border-radius: {{ block.settings.badge_corner_radius }}px;
+      background: {{ block.settings.badge_background_color }};
+      color: {{ block.settings.badge_text_color }};
+    }
+    .discounts__discount svg,
+    .discounts__discount .icon {
+      color: inherit;
+      fill: currentColor;
+    }
+  </style>
+{%- endif -%}
+
 {% schema %}
 {
   "name": "CartPromo free gifts",
@@ -119,6 +139,39 @@
       "step": 1,
       "unit": "px",
       "default": 4
+    },
+    {
+      "type": "header",
+      "content": "Cart discount labels"
+    },
+    {
+      "type": "checkbox",
+      "id": "style_discount_badges",
+      "label": "Style discount labels in the cart",
+      "default": false,
+      "info": "Shows each discount's label (the promotion name) as a colored badge on cart lines. Works with Dawn and Dawn-based themes."
+    },
+    {
+      "type": "color",
+      "id": "badge_background_color",
+      "label": "Label background",
+      "default": "#E32C2B"
+    },
+    {
+      "type": "color",
+      "id": "badge_text_color",
+      "label": "Label text",
+      "default": "#FFFFFF"
+    },
+    {
+      "type": "range",
+      "id": "badge_corner_radius",
+      "label": "Label corner radius",
+      "min": 0,
+      "max": 20,
+      "step": 1,
+      "unit": "px",
+      "default": 0
     },
     {
       "type": "header",

@@ -7,6 +7,12 @@ type = "function"
 uid = "4099471b-46b5-d5b4-a975-2269a5424228c32aed17"
 description = "t:description"
 
+  # Shopify admin > Discounts opens these app pages: "Create discount" lands on
+  # the form, and clicking an existing discount opens that promotion directly.
+  [extensions.ui.paths]
+  create = "/app/promotions/tiered/new"
+  details = "/app/discount/:functionId/:id"
+
   [[extensions.targeting]]
   target = "cart.lines.discounts.generate.run"
   input_query = "src/cart_lines_discounts_generate_run.graphql"

@@ -4,7 +4,16 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { getRule } from "../services/promotionRules.server";
 import { saveRule } from "../services/promotions.server";
+import { fetchShopTimezone } from "../services/shop.server";
 import { ConditionPicker } from "../components/ConditionPicker";
+import {
+  ActiveDatesSection,
+  EligibilitySection,
+  MinimumRequirementSection,
+  TagsSection,
+  UsageLimitSection,
+} from "../components/RuleConditionSections";
+import { initialSharedFields, serializeRuleForm } from "../utils/ruleForm";
 
 const BLANK_RULE = {
   name: "",
@@ -12,8 +21,8 @@ const BLANK_RULE = {
   discountMethod: "AUTOMATIC",
   code: "",
   combinesWith: { orderDiscounts: false, productDiscounts: false, shippingDiscounts: false },
-  startsAt: "",
-  endsAt: "",
+  startsAt: null,
+  endsAt: null,
   triggers: [],
   triggerMatch: "ANY",
   config: { basis: "QUANTITY", tiers: [], exclusions: [] },
@@ -24,12 +33,13 @@ function blankTier() {
 }
 
 export const loader = async ({ request, params }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
+  const timeZone = await fetchShopTimezone(admin);
   if (params.id === "new") {
-    return { rule: BLANK_RULE, isNew: true };
+    return { rule: BLANK_RULE, isNew: true, timeZone };
   }
   const rule = await getRule(session.shop, params.id);
-  return { rule, isNew: false };
+  return { rule, isNew: false, timeZone };
 };
 
 export const action = async ({ request, params }) => {
@@ -56,24 +66,26 @@ export const action = async ({ request, params }) => {
 };
 
 export default function TieredDiscountForm() {
-  const { rule, isNew } = useLoaderData();
+  const { rule, isNew, timeZone } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const shopify = useAppBridge();
 
-  const [form, setForm] = useState(() => ({
-    ...BLANK_RULE,
-    ...rule,
-    startsAt: rule.startsAt ? String(rule.startsAt).slice(0, 10) : "",
-    endsAt: rule.endsAt ? String(rule.endsAt).slice(0, 10) : "",
-    config: {
-      ...BLANK_RULE.config,
-      ...rule.config,
-      tiers: rule.config?.tiers?.length
-        ? rule.config.tiers.map((t) => ({ ...t, threshold: String(t.threshold), value: String(t.value) }))
-        : [blankTier()],
-    },
-  }));
+  const [form, setForm] = useState(() => {
+    // eslint-disable-next-line no-unused-vars
+    const { startsAt, endsAt, ...rest } = { ...BLANK_RULE, ...rule };
+    return {
+      ...rest,
+      ...initialSharedFields(rule, timeZone),
+      config: {
+        ...BLANK_RULE.config,
+        ...rule.config,
+        tiers: rule.config?.tiers?.length
+          ? rule.config.tiers.map((t) => ({ ...t, threshold: String(t.threshold), value: String(t.value) }))
+          : [blankTier()],
+      },
+    };
+  });
 
   useEffect(() => {
     if (fetcher.data?.ok) {
@@ -114,7 +126,7 @@ export default function TieredDiscountForm() {
   }
 
   function save() {
-    fetcher.submit(form, {
+    fetcher.submit(serializeRuleForm(form, timeZone), {
       method: "POST",
       encType: "application/json",
     });
@@ -139,6 +151,13 @@ export default function TieredDiscountForm() {
             value={form.name}
             required
             onChange={(e) => set({ name: e.target.value })}
+          />
+          <s-text-field
+            label="Cart label"
+            details="Shown to customers on discounted lines in the cart and checkout. Defaults to the name."
+            placeholder={form.name || "Tiered discount"}
+            value={form.cartLabel}
+            onChange={(e) => set({ cartLabel: e.target.value })}
           />
           <s-select label="Status" value={form.status} onChange={(e) => set({ status: e.target.value })}>
             <s-option value="DRAFT">Draft</s-option>
@@ -183,6 +202,11 @@ export default function TieredDiscountForm() {
           onMatchModeChange={(triggerMatch) => set({ triggerMatch })}
         />
       </s-section>
+
+      <MinimumRequirementSection
+        value={form.minRequirement}
+        onChange={(minRequirement) => set({ minRequirement })}
+      />
 
       <s-section heading="Tiers">
         <s-stack direction="block" gap="base">
@@ -261,6 +285,16 @@ export default function TieredDiscountForm() {
         />
       </s-section>
 
+      <EligibilitySection value={form.eligibility} onChange={(eligibility) => set({ eligibility })} />
+
+      {form.discountMethod === "CODE" && (
+        <UsageLimitSection
+          usageLimit={form.usageLimit}
+          oncePerCustomer={form.oncePerCustomer}
+          onChange={set}
+        />
+      )}
+
       <s-section heading="Combine with other discounts">
         <s-stack direction="block" gap="tight">
           <s-checkbox
@@ -281,12 +315,9 @@ export default function TieredDiscountForm() {
         </s-stack>
       </s-section>
 
-      <s-section heading="Active dates">
-        <s-stack direction="inline" gap="base">
-          <s-date-field label="Start date" value={form.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
-          <s-date-field label="End date (optional)" value={form.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
-        </s-stack>
-      </s-section>
+      <ActiveDatesSection dates={form.dates} timeZone={timeZone} onChange={(dates) => set({ dates })} />
+
+      <TagsSection tags={form.tags} onChange={(tags) => set({ tags })} />
     </s-page>
   );
 }

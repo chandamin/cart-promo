@@ -86,16 +86,72 @@ function validateRuleInput(input) {
   if (input.discountMethod === "CODE" && !input.code?.trim()) {
     throw new Error("A discount code is required when the discount method is CODE.");
   }
-  validateTriggers(input.triggers);
+  if (input.startsAt && input.endsAt && new Date(input.endsAt) <= new Date(input.startsAt)) {
+    throw new Error("End date and time must be after the start date and time.");
+  }
+  validateMinRequirement(input.minRequirement);
+  // Cart conditions are optional when a minimum purchase requirement alone
+  // decides eligibility (e.g. "free gift on orders over $99").
+  if (input.triggers?.length || !hasMinRequirement(input.minRequirement)) {
+    validateTriggers(input.triggers);
+  }
+  validateEligibility(input.eligibility);
+  if (input.discountMethod === "CODE" && input.usageLimit != null && input.usageLimit !== "") {
+    if (!(Number.isInteger(Number(input.usageLimit)) && Number(input.usageLimit) > 0)) {
+      throw new Error("Usage limit must be a whole number greater than zero.");
+    }
+  }
   CONFIG_VALIDATORS[input.type](input.config);
   if (input.type === "TIERED_DISCOUNT") {
     validateNoExcludedTriggers(input.triggers, input.config.exclusions);
   }
 }
 
+export const MIN_REQUIREMENT_TYPES = /** @type {const} */ (["NONE", "AMOUNT", "QUANTITY"]);
+export const ELIGIBILITY_TYPES = /** @type {const} */ (["ALL", "SEGMENTS", "CUSTOMERS"]);
+
+function hasMinRequirement(minRequirement) {
+  return Boolean(minRequirement && minRequirement.type && minRequirement.type !== "NONE");
+}
+
+function validateMinRequirement(minRequirement) {
+  if (!hasMinRequirement(minRequirement)) return;
+  if (!MIN_REQUIREMENT_TYPES.includes(minRequirement.type)) {
+    throw new Error(`Invalid minimum requirement: ${minRequirement.type}`);
+  }
+  const value = Number(minRequirement.value);
+  if (!(value > 0)) {
+    throw new Error("Minimum purchase requirement must be greater than zero.");
+  }
+  if (minRequirement.type === "QUANTITY" && !Number.isInteger(value)) {
+    throw new Error("Minimum quantity of items must be a whole number.");
+  }
+}
+
+function validateEligibility(eligibility) {
+  if (!eligibility || eligibility.type === "ALL") return;
+  if (!ELIGIBILITY_TYPES.includes(eligibility.type)) {
+    throw new Error(`Invalid eligibility: ${eligibility.type}`);
+  }
+  if (eligibility.type === "SEGMENTS" && !eligibility.segments?.length) {
+    throw new Error("Select at least one customer segment.");
+  }
+  if (eligibility.type === "CUSTOMERS" && !eligibility.customers?.length) {
+    throw new Error("Select at least one customer.");
+  }
+}
+
+function normalizeTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  const seen = new Set();
+  return tags
+    .map((tag) => String(tag).trim())
+    .filter((tag) => tag && !seen.has(tag.toLowerCase()) && seen.add(tag.toLowerCase()));
+}
+
 // An excluded product never counts toward tiers, so excluding a product that is
 // itself a trigger makes the rule silently unreachable for it.
-function validateNoExcludedTriggers(triggers, exclusions = []) {
+function validateNoExcludedTriggers(triggers = [], exclusions = []) {
   const excluded = new Set(exclusions.filter((e) => e.kind === "PRODUCT").map((e) => e.id));
   const overlap = triggers.filter((t) => t.kind === "PRODUCT" && excluded.has(t.id));
   if (overlap.length) {
@@ -119,9 +175,28 @@ function toRecord(input) {
     },
     startsAt: input.startsAt ? new Date(input.startsAt) : null,
     endsAt: input.endsAt ? new Date(input.endsAt) : null,
-    triggers: input.triggers,
+    triggers: input.triggers ?? [],
     triggerMatch: input.triggerMatch ?? "ANY",
     config: input.config,
+    minRequirement: hasMinRequirement(input.minRequirement)
+      ? { type: input.minRequirement.type, value: Number(input.minRequirement.value) }
+      : { type: "NONE", value: null },
+    eligibility:
+      input.eligibility && input.eligibility.type !== "ALL"
+        ? {
+            type: input.eligibility.type,
+            segments: input.eligibility.type === "SEGMENTS" ? input.eligibility.segments : [],
+            customers: input.eligibility.type === "CUSTOMERS" ? input.eligibility.customers : [],
+          }
+        : { type: "ALL", segments: [], customers: [] },
+    // Shopify only supports usage limits on code discounts.
+    usageLimit:
+      input.discountMethod === "CODE" && input.usageLimit != null && input.usageLimit !== ""
+        ? Number(input.usageLimit)
+        : null,
+    oncePerCustomer: input.discountMethod === "CODE" && Boolean(input.oncePerCustomer),
+    tags: normalizeTags(input.tags),
+    cartLabel: input.cartLabel?.trim() || null,
   };
 }
 

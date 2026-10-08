@@ -4,8 +4,16 @@
  * public API route should go through this module rather than calling either
  * service directly, so activation/deactivation behavior stays in one place.
  */
-import { createRule, updateRule, deleteRule, getRule, setStatus, setShopifyDiscountId } from "./promotionRules.server";
-import { syncShopifyDiscount, removeShopifyDiscount } from "./shopifyDiscounts.server";
+import {
+  createRule,
+  updateRule,
+  deleteRule,
+  deleteRuleByShopifyDiscountId,
+  getRule,
+  setStatus,
+  setShopifyDiscountId,
+} from "./promotionRules.server";
+import { findMissingDiscountIds, syncShopifyDiscount, removeShopifyDiscount } from "./shopifyDiscounts.server";
 
 export async function saveRule(admin, shop, id, input) {
   const rule = id === "new" ? await createRule(shop, input) : await updateRule(shop, id, input);
@@ -34,6 +42,23 @@ async function syncOrRevertToDraft(admin, shop, rule) {
     }
     throw error;
   }
+}
+
+/**
+ * Removes ACTIVE rules whose Shopify discount no longer exists. The
+ * discounts/delete webhook handles this live; this catches deletes it missed
+ * (app offline, webhook not yet registered). Returns the rules still live.
+ */
+export async function pruneDeletedDiscounts(admin, shop, rules) {
+  const linked = rules.filter((rule) => rule.status === "ACTIVE" && rule.shopifyDiscountId);
+  const missing = await findMissingDiscountIds(
+    admin,
+    linked.map((rule) => rule.shopifyDiscountId),
+  );
+  for (const discountId of missing) {
+    await deleteRuleByShopifyDiscountId(shop, discountId);
+  }
+  return rules.filter((rule) => !(rule.status === "ACTIVE" && missing.includes(rule.shopifyDiscountId)));
 }
 
 export async function removeRule(admin, shop, id) {

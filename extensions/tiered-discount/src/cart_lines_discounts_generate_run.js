@@ -14,7 +14,13 @@ import { DiscountClass, ProductDiscountSelectionStrategy } from "../generated/ap
  *   basis: "QUANTITY" | "AMOUNT",
  *   tiers: [{ threshold: number, rewardType: "PERCENTAGE" | "FIXED_AMOUNT", value: number }],
  *   exclusions: [{ kind: "PRODUCT" | "COLLECTION", id: string }],
+ *   minRequirement: { type: "AMOUNT" | "QUANTITY", value: number } | null,
+ *   label: string, // shown on the cart/checkout line
  * }
+ * `triggers` may be empty: every (non-excluded) product then qualifies.
+ *
+ * CartPromo free-gift lines (tagged with the `_cartpromo_rule` attribute) are
+ * ignored entirely — they neither count toward tiers nor get discounted.
  *
  * See free-gift-discount's run function for why trigger/excluded collections
  * are pooled into single booleans rather than resolved per-condition.
@@ -31,20 +37,25 @@ export function cartLinesDiscountsGenerateRun(input) {
   }
 
   const config = parseConfig(input.discount.metafield?.value);
-  if (!config || !config.triggers?.length || !config.tiers?.length) {
+  if (!config || !config.tiers?.length) {
     return { operations: [] };
   }
 
   const productVariantLines = input.cart.lines.filter(
-    (line) => line.merchandise.__typename === "ProductVariant",
+    (line) => line.merchandise.__typename === "ProductVariant" && !line.giftRule,
   );
 
-  if (!isTriggerSatisfied(config, productVariantLines)) {
+  if (
+    !isTriggerSatisfied(config, productVariantLines) ||
+    !meetsMinRequirement(config.minRequirement, productVariantLines)
+  ) {
     return { operations: [] };
   }
 
   const qualifyingLines = productVariantLines.filter(
-    (line) => matchesAnyCondition(line, config.triggers) && !isExcluded(line, config.exclusions),
+    (line) =>
+      (!config.triggers?.length || matchesAnyCondition(line, config.triggers)) &&
+      !isExcluded(line, config.exclusions),
   );
   if (!qualifyingLines.length) {
     return { operations: [] };
@@ -73,7 +84,7 @@ export function cartLinesDiscountsGenerateRun(input) {
     operations: [
       {
         productDiscountsAdd: {
-          candidates: [{ message: "Tiered discount", targets, value }],
+          candidates: [{ message: config.label || "Tiered discount", targets, value }],
           selectionStrategy: ProductDiscountSelectionStrategy.All,
         },
       },
@@ -110,8 +121,23 @@ function isExcluded(line, exclusions) {
   );
 }
 
+// Minimum purchase requirement over the (non-gift) cart: subtotal before
+// discounts, or total item quantity.
+function meetsMinRequirement(minRequirement, lines) {
+  if (!minRequirement) return true;
+  if (minRequirement.type === "AMOUNT") {
+    const subtotal = lines.reduce((sum, line) => sum + Number(line.cost.subtotalAmount.amount), 0);
+    return subtotal >= minRequirement.value;
+  }
+  if (minRequirement.type === "QUANTITY") {
+    return lines.reduce((sum, line) => sum + line.quantity, 0) >= minRequirement.value;
+  }
+  return true;
+}
+
 function isTriggerSatisfied(config, lines) {
   const { triggers, triggerMatch } = config;
+  if (!triggers?.length) return true;
   const conditionQuantity = (condition) =>
     lines
       .filter((line) => lineMatchesCondition(line, condition))

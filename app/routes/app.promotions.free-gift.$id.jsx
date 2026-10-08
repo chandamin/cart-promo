@@ -4,8 +4,17 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { getRule } from "../services/promotionRules.server";
 import { saveRule } from "../services/promotions.server";
+import { fetchShopTimezone } from "../services/shop.server";
 import { ConditionPicker } from "../components/ConditionPicker";
 import { GiftPicker } from "../components/GiftPicker";
+import {
+  ActiveDatesSection,
+  EligibilitySection,
+  MinimumRequirementSection,
+  TagsSection,
+  UsageLimitSection,
+} from "../components/RuleConditionSections";
+import { initialSharedFields, serializeRuleForm } from "../utils/ruleForm";
 
 const BLANK_RULE = {
   name: "",
@@ -13,20 +22,21 @@ const BLANK_RULE = {
   discountMethod: "AUTOMATIC",
   code: "",
   combinesWith: { orderDiscounts: false, productDiscounts: false, shippingDiscounts: false },
-  startsAt: "",
-  endsAt: "",
+  startsAt: null,
+  endsAt: null,
   triggers: [],
   triggerMatch: "ANY",
   config: { gifts: [], giftQuantity: 1 },
 };
 
 export const loader = async ({ request, params }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
+  const timeZone = await fetchShopTimezone(admin);
   if (params.id === "new") {
-    return { rule: BLANK_RULE, isNew: true };
+    return { rule: BLANK_RULE, isNew: true, timeZone };
   }
   const rule = await getRule(session.shop, params.id);
-  return { rule, isNew: false };
+  return { rule, isNew: false, timeZone };
 };
 
 export const action = async ({ request, params }) => {
@@ -45,18 +55,20 @@ export const action = async ({ request, params }) => {
 };
 
 export default function FreeGiftForm() {
-  const { rule, isNew } = useLoaderData();
+  const { rule, isNew, timeZone } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const shopify = useAppBridge();
 
-  const [form, setForm] = useState(() => ({
-    ...BLANK_RULE,
-    ...rule,
-    startsAt: rule.startsAt ? String(rule.startsAt).slice(0, 10) : "",
-    endsAt: rule.endsAt ? String(rule.endsAt).slice(0, 10) : "",
-    config: { ...BLANK_RULE.config, ...rule.config },
-  }));
+  const [form, setForm] = useState(() => {
+    // eslint-disable-next-line no-unused-vars
+    const { startsAt, endsAt, ...rest } = { ...BLANK_RULE, ...rule };
+    return {
+      ...rest,
+      ...initialSharedFields(rule, timeZone),
+      config: { ...BLANK_RULE.config, ...rule.config },
+    };
+  });
 
   useEffect(() => {
     if (fetcher.data?.ok) {
@@ -83,7 +95,7 @@ export default function FreeGiftForm() {
   }
 
   function save() {
-    fetcher.submit(form, {
+    fetcher.submit(serializeRuleForm(form, timeZone), {
       method: "POST",
       encType: "application/json",
     });
@@ -107,6 +119,13 @@ export default function FreeGiftForm() {
             value={form.name}
             required
             onChange={(e) => set({ name: e.target.value })}
+          />
+          <s-text-field
+            label="Cart label"
+            details="Shown to customers on the gift line in the cart and checkout. Defaults to the name."
+            placeholder={form.name || "Free gift"}
+            value={form.cartLabel}
+            onChange={(e) => set({ cartLabel: e.target.value })}
           />
           <s-select label="Status" value={form.status} onChange={(e) => set({ status: e.target.value })}>
             <s-option value="DRAFT">Draft</s-option>
@@ -152,12 +171,27 @@ export default function FreeGiftForm() {
         />
       </s-section>
 
+      <MinimumRequirementSection
+        value={form.minRequirement}
+        onChange={(minRequirement) => set({ minRequirement })}
+      />
+
       <s-section heading="Gift products">
         <s-paragraph tone="subdued">
           If more than one gift is added, the customer chooses which one to receive.
         </s-paragraph>
         <GiftPicker gifts={form.config.gifts} onChange={(gifts) => setConfig({ gifts })} />
       </s-section>
+
+      <EligibilitySection value={form.eligibility} onChange={(eligibility) => set({ eligibility })} />
+
+      {form.discountMethod === "CODE" && (
+        <UsageLimitSection
+          usageLimit={form.usageLimit}
+          oncePerCustomer={form.oncePerCustomer}
+          onChange={set}
+        />
+      )}
 
       <s-section heading="Combine with other discounts">
         <s-stack direction="block" gap="tight">
@@ -179,12 +213,9 @@ export default function FreeGiftForm() {
         </s-stack>
       </s-section>
 
-      <s-section heading="Active dates">
-        <s-stack direction="inline" gap="base">
-          <s-date-field label="Start date" value={form.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
-          <s-date-field label="End date (optional)" value={form.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
-        </s-stack>
-      </s-section>
+      <ActiveDatesSection dates={form.dates} timeZone={timeZone} onChange={(dates) => set({ dates })} />
+
+      <TagsSection tags={form.tags} onChange={(tags) => set({ tags })} />
     </s-page>
   );
 }
