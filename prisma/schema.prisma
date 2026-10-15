@@ -59,3 +59,14 @@ model PromotionRule {
 
   @@index([shop, type])
 }
+
+// One API key per shop for the external promotions API (/api/promotions).
+// Only a SHA-256 hash is stored; the key itself is shown once on creation.
+model ApiKey {
+  id         String    @id @default(cuid())
+  shop       String    @unique
+  keyHash    String    @unique
+  keyPrefix  String // first characters, to recognise the key in the UI
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+}

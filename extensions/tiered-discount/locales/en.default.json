@@ -1,4 +1,4 @@
 {
-  "name": "tiered-discount",
-  "description": "tiered-discount"
+  "name": "CartPromo tiered discount",
+  "description": "Discounts qualifying cart items by the tier the cart has reached."
 }

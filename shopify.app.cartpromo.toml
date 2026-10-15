@@ -23,6 +23,10 @@ api_version = "2026-10"
   topics = ["discounts/delete"]
   uri = "/webhooks/discounts/delete"
 
+  [[webhooks.subscriptions]]
+  topics = ["discounts/update"]
+  uri = "/webhooks/discounts/update"
+
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes

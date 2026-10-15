@@ -9,6 +9,7 @@ import prisma from "../db.server";
 export const RULE_TYPES = /** @type {const} */ (["FREE_GIFT", "TIERED_DISCOUNT"]);
 export const RULE_STATUSES = /** @type {const} */ (["DRAFT", "ACTIVE", "DISABLED"]);
 export const DISCOUNT_METHODS = /** @type {const} */ (["AUTOMATIC", "CODE"]);
+export const TRIGGER_MATCHES = /** @type {const} */ (["ANY", "ALL"]);
 
 function validateConditionList(list, label) {
   if (!Array.isArray(list) || list.length === 0) {
@@ -224,8 +225,12 @@ export async function listActiveRules(shop, type) {
   });
 }
 
+export async function findRule(shop, id) {
+  return prisma.promotionRule.findFirst({ where: { shop, id } });
+}
+
 export async function getRule(shop, id) {
-  const rule = await prisma.promotionRule.findFirst({ where: { shop, id } });
+  const rule = await findRule(shop, id);
   if (!rule) {
     throw new Error("Promotion rule not found.");
   }
@@ -249,8 +254,7 @@ export async function updateRule(shop, id, input) {
 }
 
 export async function deleteRule(shop, id) {
-  await getRule(shop, id);
-  return prisma.promotionRule.delete({ where: { id } });
+  return prisma.promotionRule.deleteMany({ where: { shop, id } });
 }
 
 /**
@@ -265,6 +269,31 @@ export async function deleteRule(shop, id) {
 export async function deleteRuleByShopifyDiscountId(shop, shopifyDiscountId) {
   return prisma.promotionRule.deleteMany({
     where: { shop, shopifyDiscountId, status: "ACTIVE" },
+  });
+}
+
+/**
+ * Called when a discount is deactivated on Shopify's discount page: the
+ * discount still exists, so the rule is kept (and keeps its discount id, to be
+ * reactivated), but the app must stop acting on it — otherwise the storefront
+ * goes on offering a gift Shopify no longer discounts.
+ */
+export async function disableRuleByShopifyDiscountId(shop, shopifyDiscountId) {
+  return prisma.promotionRule.updateMany({
+    where: { shop, shopifyDiscountId, status: "ACTIVE" },
+    data: { status: "DISABLED" },
+  });
+}
+
+/**
+ * The reverse: a discount reactivated on Shopify's discount page re-enables
+ * the rule. Only rules disabled by the step above can match, because a rule
+ * disabled in the app has no discount id (its discount is deleted).
+ */
+export async function enableRuleByShopifyDiscountId(shop, shopifyDiscountId) {
+  return prisma.promotionRule.updateMany({
+    where: { shop, shopifyDiscountId, status: "DISABLED" },
+    data: { status: "ACTIVE" },
   });
 }
 

@@ -264,6 +264,69 @@ export async function syncShopifyDiscount(admin, rule) {
   return result.automaticAppDiscount.discountId;
 }
 
+const DISCOUNT_STATES_QUERY = `#graphql
+  query cartPromoDiscountStates($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      id
+      ... on DiscountAutomaticNode {
+        automaticDiscount {
+          ... on DiscountAutomaticApp { status }
+        }
+      }
+      ... on DiscountCodeNode {
+        codeDiscount {
+          ... on DiscountCodeApp { status }
+        }
+      }
+      ... on DiscountNode {
+        discount {
+          ... on DiscountAutomaticApp { status }
+          ... on DiscountCodeApp { status }
+        }
+      }
+    }
+  }
+`;
+
+// The discount gid we store can be a DiscountAutomaticNode, a DiscountCodeNode
+// or a DiscountNode depending on the mutation that produced it, so the status
+// is read from whichever of the three shapes came back.
+function discountStatus(node) {
+  return node?.automaticDiscount?.status ?? node?.codeDiscount?.status ?? node?.discount?.status ?? null;
+}
+
+/**
+ * Looks up the live state of the given discount gids:
+ *  - `missing`: deleted in Shopify admin.
+ *  - `expired`: still there, but no longer running. Shopify has no "disabled"
+ *    discount status — its Deactivate button sets the end date to now — so a
+ *    discount a merchant deactivated reports EXPIRED.
+ *
+ * An id whose state can't be read appears in neither list: a transient API
+ * error must never delete or disable a merchant's promotion.
+ */
+export async function fetchDiscountStates(admin, discountIds) {
+  if (!discountIds.length) return { missing: [], expired: [] };
+  try {
+    const response = await admin.graphql(DISCOUNT_STATES_QUERY, { variables: { ids: discountIds } });
+    const json = await response.json();
+    if (json.errors?.length || !Array.isArray(json.data?.nodes)) {
+      // Keep the delete detection working even if the status fields don't
+      // resolve (API version change): fall back to the plain existence check.
+      return { missing: await findMissingDiscountIds(admin, discountIds), expired: [] };
+    }
+    const missing = [];
+    const expired = [];
+    json.data.nodes.forEach((node, i) => {
+      if (node === null) missing.push(discountIds[i]);
+      else if (discountStatus(node) === "EXPIRED") expired.push(discountIds[i]);
+    });
+    return { missing, expired };
+  } catch {
+    return { missing: [], expired: [] };
+  }
+}
+
 /**
  * Of the given discount gids, returns those that no longer exist in Shopify
  * (deleted in admin). Returns [] if the lookup itself fails, so callers never

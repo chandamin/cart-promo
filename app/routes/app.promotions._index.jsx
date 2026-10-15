@@ -3,12 +3,12 @@ import { useFetcher, useLoaderData, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { listRules } from "../services/promotionRules.server";
-import { changeRuleStatus, pruneDeletedDiscounts, removeRule } from "../services/promotions.server";
+import { changeRuleStatus, reconcileWithShopify, removeRule } from "../services/promotions.server";
 import { editPath } from "../utils/promotionPaths";
 
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
-  const rules = await pruneDeletedDiscounts(admin, session.shop, await listRules(session.shop));
+  const rules = await reconcileWithShopify(admin, session.shop, await listRules(session.shop));
   return { rules };
 };
 

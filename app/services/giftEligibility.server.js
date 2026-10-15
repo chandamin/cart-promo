@@ -1,5 +1,5 @@
 import { listActiveRules } from "./promotionRules.server";
-import { pruneDeletedDiscounts } from "./promotions.server";
+import { reconcileWithShopify } from "./promotions.server";
 
 /**
  * Server-side mirror of extensions/free-gift-discount's trigger-matching
@@ -19,9 +19,11 @@ import { pruneDeletedDiscounts } from "./promotions.server";
  *   customer/segment eligibility, which Shopify enforces on the discount itself.
  */
 export async function evaluateGiftRules(admin, shop, cartLines, appliedCodes = [], customerId = null) {
-  // Never offer a gift whose discount was deleted in Shopify: it would be
-  // added to the cart at full price.
-  const liveRules = await pruneDeletedDiscounts(admin, shop, await listActiveRules(shop, "FREE_GIFT"));
+  // Never offer a gift whose discount was deleted or deactivated in Shopify:
+  // it would be added to the cart at full price.
+  const liveRules = (await reconcileWithShopify(admin, shop, await listActiveRules(shop, "FREE_GIFT"))).filter(
+    (rule) => rule.status === "ACTIVE",
+  );
   const activeRules = liveRules.filter(
     (rule) =>
       rule.discountMethod === "AUTOMATIC" ||
@@ -51,7 +53,56 @@ export async function evaluateGiftRules(admin, shop, cartLines, appliedCodes = [
     }
   }
 
-  return { qualifying, giftVariantIds: [...giftVariantIds] };
+  return { qualifying: await withSellableGiftsOnly(admin, qualifying), giftVariantIds: [...giftVariantIds] };
+}
+
+/**
+ * Drops gifts the storefront could not actually add — a sold-out giveaway
+ * variant makes /cart/add.js fail, so offering it just gives the customer a
+ * button that does nothing. A rule left with no giftable variant stops
+ * qualifying altogether.
+ *
+ * If the lookup fails, every gift is offered as before: a transient API error
+ * must not silently withhold a merchant's gift.
+ */
+async function withSellableGiftsOnly(admin, qualifying) {
+  const variantIds = [...new Set(qualifying.flatMap((q) => q.gifts.map((gift) => gift.variantId)))];
+  if (!variantIds.length) return qualifying;
+
+  const unsellable = await fetchUnsellableVariantIds(admin, variantIds);
+  if (!unsellable.size) return qualifying;
+
+  return qualifying
+    .map((q) => ({ ...q, gifts: q.gifts.filter((gift) => !unsellable.has(gift.variantId)) }))
+    .filter((q) => q.gifts.length);
+}
+
+async function fetchUnsellableVariantIds(admin, variantIds) {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query cartPromoGiftAvailability($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on ProductVariant {
+              id
+              availableForSale
+            }
+          }
+        }
+      `,
+      { variables: { ids: variantIds } },
+    );
+    const json = await response.json();
+    if (json.errors?.length || !Array.isArray(json.data?.nodes)) return new Set();
+    const unsellable = new Set();
+    json.data.nodes.forEach((node, i) => {
+      // A deleted variant comes back as null, and can't be added either.
+      if (node === null || node.availableForSale === false) unsellable.add(variantIds[i]);
+    });
+    return unsellable;
+  } catch {
+    return new Set();
+  }
 }
 
 async function filterEligibleRules(admin, rules, customerId) {

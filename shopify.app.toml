@@ -48,6 +48,10 @@ api_version = "2026-10"
   uri = "/webhooks/discounts/delete"
   topics = [ "discounts/delete" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/discounts/update"
+  topics = [ "discounts/update" ]
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 

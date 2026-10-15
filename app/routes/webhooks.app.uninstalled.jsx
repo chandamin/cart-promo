@@ -11,6 +11,8 @@ export const action = async ({ request }) => {
   if (session) {
     await db.session.deleteMany({ where: { shop } });
   }
+  // The external API must stop working for a shop that removed the app.
+  await db.apiKey.deleteMany({ where: { shop } });
 
   return new Response();
 };

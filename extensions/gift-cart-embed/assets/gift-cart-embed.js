@@ -13,6 +13,7 @@
     subtext: "Add it to your bag below — on the house.",
     yours_free_text: "Yours, Free",
     button_text: "Add to cart",
+    adding_text: "Adding…",
     continue_text: "Continue shopping",
     background_color: "#FAF6EF",
     eyebrow_color: "#B08D57",
@@ -73,6 +74,10 @@
   // again on every page load: only once the cart's (non-gift) products change.
   var DISMISS_KEY = "cartpromo:gift-dismissed";
 
+  function dismissStorageKey(ruleId) {
+    return DISMISS_KEY + ":" + ruleId;
+  }
+
   function cartSignature(cart) {
     return cart.items
       .filter(function (item) {
@@ -85,13 +90,9 @@
       .join(",");
   }
 
-  function dismissKey(ruleId, cart) {
-    return ruleId + "|" + cartSignature(cart);
-  }
-
   function isDismissed(ruleId, cart) {
     try {
-      return window.localStorage.getItem(DISMISS_KEY) === dismissKey(ruleId, cart);
+      return window.localStorage.getItem(dismissStorageKey(ruleId)) === cartSignature(cart);
     } catch (e) {
       return false;
     }
@@ -99,7 +100,7 @@
 
   function rememberDismissal(ruleId, cart) {
     try {
-      window.localStorage.setItem(DISMISS_KEY, dismissKey(ruleId, cart));
+      window.localStorage.setItem(dismissStorageKey(ruleId), cartSignature(cart));
     } catch (e) {
       // Storage unavailable (private mode, blocked): popup just shows again.
     }
@@ -133,6 +134,8 @@
 
   // Stores the rule id (not the variant id) so the checkout extension, which
   // reads the same key, can match the line to its rule.
+  // Rejects with the reason Shopify gave (sold out, unavailable, ...) so the
+  // popup can say why instead of closing as though the gift had been added.
   function addGift(variantId, ruleId) {
     var numericId = variantId.split("/").pop();
     var props = {};
@@ -141,6 +144,16 @@
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ id: numericId, quantity: 1, properties: props }),
+    }).then(function (response) {
+      if (response.ok) return response;
+      return response
+        .json()
+        .catch(function () {
+          return null;
+        })
+        .then(function (body) {
+          throw new Error((body && (body.description || body.message)) || "This gift could not be added.");
+        });
     });
   }
 
@@ -261,14 +274,19 @@
     if (e.key === "Escape") dismissModal();
   }
 
-  function giftCard(gift, s, onPick) {
+  function giftCard(gift, s, compact, onPick) {
+    var imageSize = compact ? 84 : 140;
     var card = document.createElement("div");
-    card.style.cssText = "text-align:center;margin-bottom:16px;";
+    card.style.cssText = "text-align:center;margin-bottom:" + (compact ? 12 : 16) + "px;";
 
     if (gift.image) {
       var imgWrap = document.createElement("div");
       imgWrap.style.cssText =
-        "width:140px;height:140px;margin:0 auto 12px;border:1px solid " +
+        "width:" +
+        imageSize +
+        "px;height:" +
+        imageSize +
+        "px;margin:0 auto 12px;border:1px solid " +
         s.eyebrow_color +
         "33;border-radius:" +
         Math.min(s.corner_radius, 12) +
@@ -304,7 +322,7 @@
       s.button_text_color +
       ";font-size:14px;font-weight:600;letter-spacing:.03em;cursor:pointer;";
     btn.addEventListener("click", function () {
-      onPick(gift.variantId);
+      onPick(gift.variantId, btn);
     });
     card.appendChild(btn);
 
@@ -335,6 +353,7 @@
       ";border-radius:" +
       s.corner_radius +
       "px;max-width:380px;width:100%;padding:32px 28px;text-align:center;" +
+      "max-height:calc(100vh - 32px);overflow-y:auto;-webkit-overflow-scrolling:touch;" +
       "box-shadow:0 10px 40px rgba(0,0,0,.2);font-family:inherit;";
 
     var closeBtn = document.createElement("button");
@@ -373,11 +392,25 @@
     subtext.style.cssText = "font-size:14px;color:" + s.text_color + ";margin-bottom:20px;";
     card.appendChild(subtext);
 
+    var error = document.createElement("div");
+    error.style.cssText = "display:none;font-size:13px;color:#8E1F0B;margin-bottom:12px;";
+    card.appendChild(error);
+
+    var compact = rule.gifts.length > 1;
     rule.gifts.forEach(function (gift) {
       card.appendChild(
-        giftCard(gift, s, function (variantId) {
-          closeModal();
-          onPick(variantId);
+        giftCard(gift, s, compact, function (variantId, btn) {
+          error.style.display = "none";
+          btn.disabled = true;
+          btn.style.opacity = "0.6";
+          btn.textContent = s.adding_text;
+          Promise.resolve(onPick(variantId)).catch(function (e) {
+            btn.disabled = false;
+            btn.style.opacity = "1";
+            btn.textContent = s.button_text;
+            error.textContent = (e && e.message) || "This gift could not be added.";
+            error.style.display = "block";
+          });
         }),
       );
     });
@@ -479,7 +512,10 @@
           showModal(
             outcome.showFor,
             function (variantId) {
-              addGift(variantId, ruleId).then(refreshCartUI).then(sync);
+              return addGift(variantId, ruleId).then(function () {
+                closeModal();
+                return refreshCartUI().then(sync);
+              });
             },
             function () {
               rememberDismissal(ruleId, outcome.cart);
@@ -521,7 +557,7 @@
   window.fetch = function (input, init) {
     var url = typeof input === "string" ? input : input && input.url;
     var isCartMutation = url && /\/cart\/(add|change|update|clear)(\.js)?/.test(url);
-    var result = originalFetch.apply(this, arguments);
+    var result = originalFetch.call(this, input, init);
     if (isCartMutation) {
       result.then(function () {
         debouncedSync();
