@@ -2,29 +2,29 @@ import { getRule } from "../services/promotionRules.server";
 import { removeRule, saveRule } from "../services/promotions.server";
 import {
   authenticateApiRequest,
-  errorResponse,
+  handleApiRequest,
   jsonError,
   mergeRuleUpdate,
   readJsonObject,
   serializeRule,
 } from "../services/promotionsApi.server";
 
-/** GET /api/promotions/:id — one promotion. */
-export const loader = async ({ request, params }) => {
-  try {
+/**
+ * GET /api/promotions/:id — one promotion. OPTIONS is answered here as a CORS
+ * preflight (see handleApiRequest).
+ */
+export const loader = ({ request, params }) =>
+  handleApiRequest(request, async () => {
     const { shop } = await authenticateApiRequest(request);
     return Response.json({ promotion: serializeRule(await getRule(shop, params.id)) });
-  } catch (error) {
-    return errorResponse(error);
-  }
-};
+  });
 
 /**
  * PATCH (or PUT) /api/promotions/:id — update; send only the fields to change.
  * DELETE /api/promotions/:id — delete the promotion and its Shopify discount.
  */
-export const action = async ({ request, params }) => {
-  try {
+export const action = ({ request, params }) =>
+  handleApiRequest(request, async () => {
     const { shop, admin } = await authenticateApiRequest(request);
 
     if (request.method === "DELETE") {
@@ -41,7 +41,4 @@ export const action = async ({ request, params }) => {
     }
 
     return jsonError(405, "Method not allowed. Use GET, PATCH, PUT or DELETE.");
-  } catch (error) {
-    return errorResponse(error);
-  }
-};
+  });

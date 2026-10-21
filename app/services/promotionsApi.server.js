@@ -1,4 +1,5 @@
 import { unauthenticated } from "../shopify.server";
+import { preflightResponse, withCors } from "../utils/apiCors.server";
 import { findShopByApiKey } from "./apiKeys.server";
 import {
   DISCOUNT_METHODS,
@@ -16,6 +17,24 @@ import {
 
 export function jsonError(status, message) {
   return Response.json({ error: message }, { status });
+}
+
+/**
+ * Runs an API route handler: answers CORS preflights, turns anything thrown
+ * (including the Responses thrown below) into a JSON error, and tags every
+ * response with the CORS headers a browser client needs to read it.
+ */
+export async function handleApiRequest(request, handler) {
+  if (request.method === "OPTIONS") {
+    return preflightResponse(request);
+  }
+  let response;
+  try {
+    response = await handler();
+  } catch (error) {
+    response = errorResponse(error);
+  }
+  return withCors(request, response);
 }
 
 /** Returns { shop, admin }, or throws a 401/403 JSON Response. */
