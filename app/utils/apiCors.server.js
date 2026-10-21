@@ -45,16 +45,26 @@ export function corsHeaders(request) {
   };
 }
 
-/** The same response, carrying the CORS headers. */
-export function withCors(request, response) {
-  const headers = corsHeaders(request);
-  if (!Object.keys(headers).length) return response;
+/**
+ * Headers every response on these routes carries.
+ *
+ * `no-store` matters in production: the host's cache (Varnish on Cloudways) was
+ * caching a keyless GET and serving that copy — sent before these CORS headers
+ * existed — to later callers. An API answering per API key must never be cached
+ * by a shared proxy, or one shop could be handed another shop's response.
+ */
+export function apiHeaders(request) {
+  return { "Cache-Control": "no-store", ...corsHeaders(request) };
+}
 
+/** The same response, carrying the API headers. */
+export function withApiHeaders(request, response) {
   const merged = new Headers(response.headers);
-  for (const [name, value] of Object.entries(headers)) {
+  for (const [name, value] of Object.entries(apiHeaders(request))) {
     merged.set(name, value);
   }
-  // Appended, not set: the response may already vary on something else.
+  // Always, and appended rather than set: what these routes answer depends on
+  // the Origin, and the response may already vary on something else.
   merged.append("Vary", "Origin");
   return new Response(response.body, {
     status: response.status,
@@ -65,5 +75,5 @@ export function withCors(request, response) {
 
 /** Preflight answer. Deliberately before any key check: a preflight carries no key. */
 export function preflightResponse(request) {
-  return new Response(null, { status: 204, headers: corsHeaders(request) });
+  return new Response(null, { status: 204, headers: { ...apiHeaders(request), Vary: "Origin" } });
 }

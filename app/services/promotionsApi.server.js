@@ -1,5 +1,5 @@
 import { unauthenticated } from "../shopify.server";
-import { preflightResponse, withCors } from "../utils/apiCors.server";
+import { preflightResponse, withApiHeaders } from "../utils/apiCors.server";
 import { findShopByApiKey } from "./apiKeys.server";
 import {
   DISCOUNT_METHODS,
@@ -22,7 +22,8 @@ export function jsonError(status, message) {
 /**
  * Runs an API route handler: answers CORS preflights, turns anything thrown
  * (including the Responses thrown below) into a JSON error, and tags every
- * response with the CORS headers a browser client needs to read it.
+ * response with the headers a browser client needs to read it — and that keep
+ * it out of any shared cache.
  */
 export async function handleApiRequest(request, handler) {
   if (request.method === "OPTIONS") {
@@ -34,7 +35,7 @@ export async function handleApiRequest(request, handler) {
   } catch (error) {
     response = errorResponse(error);
   }
-  return withCors(request, response);
+  return withApiHeaders(request, response);
 }
 
 /** Returns { shop, admin }, or throws a 401/403 JSON Response. */

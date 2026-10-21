@@ -26,6 +26,14 @@ function validateConditionList(list, label) {
 }
 
 function validateTriggers(triggers) {
+  // Spelled out, because a caller that meant to set a minimum purchase
+  // requirement instead of cart conditions (and mistyped it, or left its type
+  // as NONE) otherwise only hears that a trigger is missing.
+  if (!Array.isArray(triggers) || triggers.length === 0) {
+    throw new Error(
+      "At least one cart trigger (product or collection) is required, unless a minimum purchase requirement is set.",
+    );
+  }
   validateConditionList(triggers, "cart trigger");
 }
 
