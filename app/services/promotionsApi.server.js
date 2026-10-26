@@ -38,10 +38,15 @@ export async function handleApiRequest(request, handler) {
   return withApiHeaders(request, response);
 }
 
+/** The key sent as `Authorization: Bearer <key>`, or null. */
+export function bearerKey(request) {
+  const header = request.headers.get("Authorization") || "";
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : null;
+}
+
 /** Returns { shop, admin }, or throws a 401/403 JSON Response. */
 export async function authenticateApiRequest(request) {
-  const header = request.headers.get("Authorization") || "";
-  const key = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : null;
+  const key = bearerKey(request);
   const shop = await findShopByApiKey(key);
   if (!shop) {
     throw jsonError(401, "Missing or invalid API key. Send it as: Authorization: Bearer <key>");
@@ -177,6 +182,13 @@ export function buildCreateInput(body) {
   };
   validateEnumFields(created);
   return created;
+}
+
+/** An error as { status, message }, for reporting one failure among many. */
+export async function describeError(error) {
+  const response = errorResponse(error);
+  const body = await response.clone().json().catch(() => null);
+  return { status: response.status, message: body?.error ?? "Request failed." };
 }
 
 /** Maps a service error to an API response. */

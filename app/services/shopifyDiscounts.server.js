@@ -218,6 +218,16 @@ async function run(admin, query, variables) {
   return payload;
 }
 
+// The stored gid says which kind of discount it is: code discounts are
+// DiscountCodeNode, automatic ones DiscountAutomaticNode. Shopify cannot turn
+// one into the other, and each kind's update/delete mutation rejects the
+// other's ids with "Invalid id".
+function discountKind(discountId) {
+  if (/DiscountCodeNode/.test(discountId ?? "")) return "CODE";
+  if (/DiscountAutomaticNode/.test(discountId ?? "")) return "AUTOMATIC";
+  return null;
+}
+
 /**
  * Creates or updates the live Shopify discount for an ACTIVE rule, or removes
  * it for a DRAFT/DISABLED rule. Returns the discount gid (or null if removed).
@@ -228,6 +238,17 @@ export async function syncShopifyDiscount(admin, rule) {
       await removeShopifyDiscount(admin, rule);
     }
     return null;
+  }
+
+  // The method was switched (code <-> automatic): the old discount is of the
+  // wrong kind and can't be updated, so remove it and create the right one.
+  // Without this the save failed with "Invalid id: gid://shopify/DiscountCodeNode/…"
+  // and the old code discount stayed live in Shopify with no rule behind it —
+  // customers entering its code then got "valid but not applicable".
+  const storedKind = discountKind(rule.shopifyDiscountId);
+  if (storedKind && storedKind !== rule.discountMethod) {
+    await removeShopifyDiscount(admin, rule);
+    rule = { ...rule, shopifyDiscountId: null };
   }
 
   const discountInput = buildDiscountInput(rule);
@@ -350,15 +371,18 @@ export async function findMissingDiscountIds(admin, discountIds) {
 }
 
 function isMissingDiscountError(error) {
-  return /does not exist|not found/i.test(error?.message ?? "");
+  return /does not exist|not found|invalid id/i.test(error?.message ?? "");
 }
 
 // Idempotent: the discount may already be gone (deleted in Shopify admin), or
 // the stored id may be of the other kind if the rule's method was changed.
 export async function removeShopifyDiscount(admin, rule) {
   if (!rule.shopifyDiscountId) return;
+  // Trust the id's kind over the rule's current method: after a method switch
+  // they disagree, and the wrong mutation fails and leaves the discount live.
+  const kind = discountKind(rule.shopifyDiscountId) ?? rule.discountMethod;
   const [primary, fallback] =
-    rule.discountMethod === "CODE" ? [CODE_DELETE, AUTOMATIC_DELETE] : [AUTOMATIC_DELETE, CODE_DELETE];
+    kind === "CODE" ? [CODE_DELETE, AUTOMATIC_DELETE] : [AUTOMATIC_DELETE, CODE_DELETE];
   try {
     await run(admin, primary, { id: rule.shopifyDiscountId });
   } catch (error) {

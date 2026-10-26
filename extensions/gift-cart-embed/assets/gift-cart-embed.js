@@ -109,13 +109,13 @@
   function fetchQualifyingRules(cart) {
     var params = new URLSearchParams();
     params.set("lines", JSON.stringify(linesPayload(cart)));
-    var codes = (cart.discount_codes || [])
-      .filter(function (d) {
-        return d.applicable;
-      })
-      .map(function (d) {
-        return d.code;
-      });
+    // Every code on the cart, not only the `applicable` ones: a gift code only
+    // becomes applicable once the gift is in the cart, so requiring it here
+    // meant the gift was never offered and the code stayed "not applicable".
+    // The server still checks each code against a rule's conditions.
+    var codes = (cart.discount_codes || []).map(function (d) {
+      return d.code;
+    });
     params.set("codes", JSON.stringify(codes));
     return fetch(PROXY_URL + "?" + params.toString(), { headers: { Accept: "application/json" } })
       .then(function (r) {
