@@ -47,6 +47,9 @@ function buildMetafields(rule) {
 
   if (rule.type === "FREE_GIFT") {
     const config = {
+      // The Function only discounts gift lines tagged with this id in their
+      // `_cartpromo_rule` property, and never more than one unit per rule.
+      ruleId: rule.id,
       triggerMatch: rule.triggerMatch,
       triggers,
       giftVariantIds: rule.config.gifts.map((g) => g.variantId),
@@ -229,60 +232,78 @@ function discountKind(discountId) {
 }
 
 /**
- * Creates or updates the live Shopify discount for an ACTIVE rule, or removes
- * it for a DRAFT/DISABLED rule. Returns the discount gid (or null if removed).
+ * Creates or updates the live Shopify discount for an ACTIVE rule.
+ *
+ * Resolves to `{ discountId, staleDiscountId }`. `staleDiscountId` is set when
+ * the method was switched (code <-> automatic): Shopify can't change a
+ * discount's type in place, so the new discount is created FIRST and the old
+ * one is left for the caller to delete once the new id is safely stored. A
+ * failure anywhere before that leaves the old discount and stored id untouched.
+ *
+ * For a non-ACTIVE rule nothing is created; use removeShopifyDiscount.
  */
 export async function syncShopifyDiscount(admin, rule) {
   if (rule.status !== "ACTIVE") {
-    if (rule.shopifyDiscountId) {
-      await removeShopifyDiscount(admin, rule);
-    }
-    return null;
+    return { discountId: rule.shopifyDiscountId ?? null, staleDiscountId: null };
   }
 
-  // The method was switched (code <-> automatic): the old discount is of the
-  // wrong kind and can't be updated, so remove it and create the right one.
-  // Without this the save failed with "Invalid id: gid://shopify/DiscountCodeNode/…"
-  // and the old code discount stayed live in Shopify with no rule behind it —
-  // customers entering its code then got "valid but not applicable".
-  const storedKind = discountKind(rule.shopifyDiscountId);
-  if (storedKind && storedKind !== rule.discountMethod) {
-    await removeShopifyDiscount(admin, rule);
-    rule = { ...rule, shopifyDiscountId: null };
+  let existingId = rule.shopifyDiscountId ?? null;
+  let staleDiscountId = null;
+
+  if (existingId) {
+    const storedKind = discountKind(existingId);
+    if ((await findMissingDiscountIds(admin, [existingId])).length) {
+      // Deleted in Shopify admin: nothing to update or clean up, just create anew.
+      existingId = null;
+    } else if (storedKind && storedKind !== rule.discountMethod) {
+      staleDiscountId = existingId;
+      existingId = null;
+    }
   }
 
   const discountInput = buildDiscountInput(rule);
-  discountInput.context = await buildContext(admin, rule);
+  // Context (customers/segments) is diffed against the live discount we update,
+  // not against the stale one we are replacing.
+  discountInput.context = await buildContext(admin, { ...rule, shopifyDiscountId: existingId });
 
-  if (rule.discountMethod === "CODE") {
+  const isCode = rule.discountMethod === "CODE";
+  if (isCode) {
     discountInput.code = rule.code;
     discountInput.usageLimit = rule.usageLimit ?? null;
     discountInput.appliesOncePerCustomer = Boolean(rule.oncePerCustomer);
-    if (rule.shopifyDiscountId) {
-      try {
-        const result = await run(admin, CODE_UPDATE, { id: rule.shopifyDiscountId, discount: discountInput });
-        return result.codeAppDiscount.discountId;
-      } catch (error) {
-        // Stale id: clean up whatever it points to, then create a fresh discount.
-        if (!isMissingDiscountError(error)) throw error;
-        await removeShopifyDiscount(admin, rule);
-      }
-    }
-    const result = await run(admin, CODE_CREATE, { discount: discountInput });
-    return result.codeAppDiscount.discountId;
   }
+  const [updateMutation, createMutation] = isCode ? [CODE_UPDATE, CODE_CREATE] : [AUTOMATIC_UPDATE, AUTOMATIC_CREATE];
+  const pick = (result) => (isCode ? result.codeAppDiscount : result.automaticAppDiscount).discountId;
 
-  if (rule.shopifyDiscountId) {
+  if (existingId) {
     try {
-      const result = await run(admin, AUTOMATIC_UPDATE, { id: rule.shopifyDiscountId, discount: discountInput });
-      return result.automaticAppDiscount.discountId;
+      return { discountId: pick(await run(admin, updateMutation, { id: existingId, discount: discountInput })), staleDiscountId };
     } catch (error) {
+      // Stale id that slipped past the existence check: replace it.
       if (!isMissingDiscountError(error)) throw error;
-      await removeShopifyDiscount(admin, rule);
     }
   }
-  const result = await run(admin, AUTOMATIC_CREATE, { discount: discountInput });
-  return result.automaticAppDiscount.discountId;
+  return { discountId: pick(await run(admin, createMutation, { discount: discountInput })), staleDiscountId };
+}
+
+/** Does a Shopify discount already use this code? Resolves to its gid, or null. */
+export async function findDiscountIdByCode(admin, code) {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query cartPromoCodeLookup($code: String!) {
+          codeDiscountNodeByCode(code: $code) { id }
+        }
+      `,
+      { variables: { code } },
+    );
+    const json = await response.json();
+    if (json.errors?.length) return null;
+    return json.data?.codeDiscountNodeByCode?.id ?? null;
+  } catch {
+    // Can't tell: let Shopify's own uniqueness check have the last word.
+    return null;
+  }
 }
 
 const DISCOUNT_STATES_QUERY = `#graphql

@@ -5,10 +5,13 @@ import { DiscountClass, ProductDiscountSelectionStrategy } from "../generated/ap
  * @typedef {import("../generated/api").CartLinesDiscountsGenerateRunResult} CartLinesDiscountsGenerateRunResult
  */
 
+const PLACEHOLDER_PERCENTAGE = 0.01;
+
 /**
  * Config JSON shape written by app/services/shopifyDiscounts.server.js onto
  * the discount's `$app:cartpromo` / `free-gift-config` metafield:
  * {
+ *   ruleId: string, // the CartPromo rule id; gift lines carry it in `_cartpromo_rule`
  *   triggerMatch: "ANY" | "ALL",
  *   triggers: [{ kind: "PRODUCT" | "COLLECTION", id: string, minQuantity: number }],
  *   giftVariantIds: string[],
@@ -40,14 +43,15 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
+  // A gift line is a line of one of this rule's gift variants that carries THIS
+  // rule's id in the `_cartpromo_rule` line property. The same variant bought
+  // normally (no property), or tagged for another rule, is a paid product.
   const giftLines = input.cart.lines.filter(
     (line) =>
       line.merchandise.__typename === "ProductVariant" &&
-      config.giftVariantIds.includes(line.merchandise.id),
+      config.giftVariantIds.includes(line.merchandise.id) &&
+      isTaggedForRule(line, config.ruleId),
   );
-  if (!giftLines.length) {
-    return { operations: [] };
-  }
 
   // Gift lines (this rule's, or any other CartPromo gift) never count toward
   // the conditions: a free product must not unlock its own reward.
@@ -58,6 +62,38 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
+  // The cart qualifies but the gift isn't in it yet: nothing to discount.
+  // Do NOT return `enteredDiscountCodesAccept` here. For a code discount the
+  // triggering code is already implicitly accepted, and returning the accept
+  // operation makes Shopify reject the output (InvalidOutputError).
+  // A code that discounts nothing is rejected by checkout, so the gift could
+  // never be added by the code that unlocks it. While a code is entered, give a
+  // token discount (PLACEHOLDER_PERCENTAGE) on a qualifying line so the code is
+  // accepted; the checkout extension then adds the gift, which turns 100% free.
+  if (!giftLines.length) {
+    const [target] = otherLines;
+    if (!input.enteredDiscountCodes?.length || !target) return { operations: [] };
+    return {
+      operations: [
+        {
+          productDiscountsAdd: {
+            candidates: [
+              {
+                message: config.label || "Free gift",
+                targets: [{ cartLine: { id: target.id } }],
+                value: { percentage: { value: PLACEHOLDER_PERCENTAGE } },
+              },
+            ],
+            selectionStrategy: ProductDiscountSelectionStrategy.First,
+          },
+        },
+      ],
+    };
+  }
+
+  // One unit of one gift per rule, however many gift lines or units the cart
+  // holds: the first tagged line (cart order) gets exactly one unit free.
+  const [giftLine] = giftLines;
   return {
     operations: [
       {
@@ -65,7 +101,7 @@ export function cartLinesDiscountsGenerateRun(input) {
           candidates: [
             {
               message: config.label || "Free gift",
-              targets: giftLines.map((line) => ({ cartLine: { id: line.id } })),
+              targets: [{ cartLine: { id: giftLine.id, quantity: 1 } }],
               value: { percentage: { value: 100 } },
             },
           ],
@@ -74,6 +110,14 @@ export function cartLinesDiscountsGenerateRun(input) {
       },
     ],
   };
+}
+
+// Discounts configs saved before `ruleId` existed have none to compare with:
+// for those, any tagged line counts until the rule is saved again.
+function isTaggedForRule(line, ruleId) {
+  const tag = line.giftRule?.value;
+  if (!tag) return false;
+  return ruleId ? tag === ruleId : true;
 }
 
 function parseConfig(raw) {

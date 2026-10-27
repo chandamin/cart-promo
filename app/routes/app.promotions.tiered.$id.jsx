@@ -61,7 +61,7 @@ export const action = async ({ request, params }) => {
     if (error instanceof Response) throw error; // let auth redirects/etc. propagate
     // eslint-disable-next-line no-console
     console.error("[promotions/tiered] save failed:", error);
-    return { ok: false, error: error.message ?? String(error) };
+    return { ok: false, error: error.message ?? String(error), field: error.field ?? null };
   }
 };
 
@@ -92,7 +92,8 @@ export default function TieredDiscountForm() {
       shopify.toast.show(isNew ? "Promotion created" : "Promotion saved");
       navigate("/app/promotions");
     } else if (fetcher.data?.error) {
-      shopify.toast.show(fetcher.data.error, { isError: true });
+      // A problem with one field is shown under that field, not as a toast.
+      if (!fetcher.data.field) shopify.toast.show(fetcher.data.error, { isError: true });
     }
   }, [fetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -180,6 +181,7 @@ export default function TieredDiscountForm() {
           {form.discountMethod === "CODE" && (
             <s-text-field
               label="Discount code"
+              error={fetcher.data?.field === "code" ? fetcher.data.error : undefined}
               value={form.code}
               required
               onChange={(e) => set({ code: e.target.value.toUpperCase() })}

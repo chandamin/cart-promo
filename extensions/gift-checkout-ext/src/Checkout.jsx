@@ -46,10 +46,13 @@ function Extension() {
       let result;
       try {
         const response = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+        console.log("[cartpromo] gift-rules", response.status, url.toString());
         result = response.ok ? await response.json() : { qualifying: [], giftVariantIds: [] };
-      } catch {
+      } catch (error) {
+        console.log("[cartpromo] gift-rules fetch failed", error);
         result = { qualifying: [], giftVariantIds: [] };
       }
+      console.log("[cartpromo] codes", shopify.discountCodes.value, "qualifying", result.qualifying);
       if (cancelled) return;
 
       const qualifyingRuleIds = result.qualifying.map((q) => q.ruleId);
@@ -70,16 +73,27 @@ function Extension() {
         await shopify.applyCartLinesChange({ type: "removeCartLine", id: line.id, quantity: line.quantity });
       }
 
-      // Never auto-add: a qualifying gift always waits for the customer to
-      // confirm via the banner below, whether there's one option or several.
+      // A single-gift rule is added right away (the code that unlocks it is only
+      // accepted by checkout until then); several gifts wait for the customer to
+      // choose via the banner below.
       const remainingLines = currentLines.filter((l) => !staleLines.includes(l));
       let nextPicker = null;
       for (const q of result.qualifying) {
         const alreadyHasOne = q.gifts.some((g) =>
           remainingLines.some((l) => l.merchandise?.id === g.variantId),
         );
-        if (alreadyHasOne || nextPicker) continue;
-        nextPicker = q;
+        if (alreadyHasOne) continue;
+        if (q.gifts.length === 1) {
+          await shopify.applyCartLinesChange({
+            type: "addCartLine",
+            merchandiseId: q.gifts[0].variantId,
+            quantity: 1,
+            attributes: [{ key: ATTRIBUTE_KEY, value: q.ruleId }],
+          });
+          if (cancelled) return;
+        } else if (!nextPicker) {
+          nextPicker = q;
+        }
       }
       if (!cancelled) setPickerRule(nextPicker);
     }

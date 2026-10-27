@@ -77,6 +77,13 @@
       "default": "Continue shopping"
     },
     {
+      "type": "text",
+      "id": "reclaim_text",
+      "label": "Link to reopen a dismissed gift",
+      "default": "You've unlocked a free gift – choose it",
+      "info": "Shown at the bottom of the screen after the popup was closed. To place it inside your cart drawer instead, add an element with the attribute data-cartpromo-gift-slot."
+    },
+    {
       "type": "header",
       "content": "Colors"
     },
@@ -193,6 +200,29 @@
       ],
       "default": "auto",
       "info": "Choose \"Reload the page\" if your theme's cart drawer doesn't show the gift change."
+    },
+    {
+      "type": "header",
+      "content": "Code field"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_code_field",
+      "label": "Show a discount code field on the cart page",
+      "default": true,
+      "info": "Customers enter a gift code here and the gift is added to the cart. To show it in a cart drawer, add an element with data-cartpromo-code-slot to the theme."
+    },
+    {
+      "type": "text",
+      "id": "code_placeholder",
+      "label": "Field placeholder",
+      "default": "Discount or gift code"
+    },
+    {
+      "type": "text",
+      "id": "code_button_text",
+      "label": "Button text",
+      "default": "Apply"
     }
   ]
 }

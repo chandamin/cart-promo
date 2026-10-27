@@ -39,7 +39,9 @@ export async function evaluateGiftRules(admin, shop, cartLines, appliedCodes = [
     for (const gift of rule.config.gifts) giftVariantIds.add(gift.variantId);
   }
 
-  const nonGiftLines = cartLines.filter((line) => !line.isGift && !giftVariantIds.has(line.variantId));
+  // Same view as the Function: only lines tagged as a gift are gifts. A gift
+  // product bought normally is an ordinary, paid line.
+  const nonGiftLines = cartLines.filter((line) => !line.isGift);
   const productIds = [...new Set(nonGiftLines.map((line) => line.productId))];
   const collectionsByProduct = await fetchProductCollectionIds(admin, productIds);
 

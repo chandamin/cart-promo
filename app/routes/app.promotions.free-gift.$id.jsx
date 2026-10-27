@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useFetcher, useLoaderData, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { getRule } from "../services/promotionRules.server";
+import { getRule, listRules } from "../services/promotionRules.server";
 import { saveRule } from "../services/promotions.server";
 import { fetchShopTimezone } from "../services/shop.server";
 import { ConditionPicker } from "../components/ConditionPicker";
@@ -21,7 +21,9 @@ const BLANK_RULE = {
   status: "DRAFT",
   discountMethod: "AUTOMATIC",
   code: "",
-  combinesWith: { orderDiscounts: false, productDiscounts: false, shippingDiscounts: false },
+  // A gift is only free if Shopify lets its discount combine with the other
+  // active product discounts, so new gift rules start with that ticked.
+  combinesWith: { orderDiscounts: false, productDiscounts: true, shippingDiscounts: false },
   startsAt: null,
   endsAt: null,
   triggers: [],
@@ -32,11 +34,15 @@ const BLANK_RULE = {
 export const loader = async ({ request, params }) => {
   const { session, admin } = await authenticate.admin(request);
   const timeZone = await fetchShopTimezone(admin);
+  // Other live rules: whether they combine decides if the gift stays free.
+  const otherActive = (await listRules(session.shop))
+    .filter((r) => r.status === "ACTIVE" && r.id !== params.id)
+    .map((r) => ({ id: r.id, name: r.name, productDiscounts: Boolean(r.combinesWith?.productDiscounts) }));
   if (params.id === "new") {
-    return { rule: BLANK_RULE, isNew: true, timeZone };
+    return { rule: BLANK_RULE, isNew: true, timeZone, otherActive };
   }
   const rule = await getRule(session.shop, params.id);
-  return { rule, isNew: false, timeZone };
+  return { rule, isNew: false, timeZone, otherActive };
 };
 
 export const action = async ({ request, params }) => {
@@ -50,12 +56,12 @@ export const action = async ({ request, params }) => {
     if (error instanceof Response) throw error; // let auth redirects/etc. propagate
     // eslint-disable-next-line no-console
     console.error("[promotions/free-gift] save failed:", error);
-    return { ok: false, error: error.message ?? String(error) };
+    return { ok: false, error: error.message ?? String(error), field: error.field ?? null };
   }
 };
 
 export default function FreeGiftForm() {
-  const { rule, isNew, timeZone } = useLoaderData();
+  const { rule, isNew, timeZone, otherActive } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -75,7 +81,8 @@ export default function FreeGiftForm() {
       shopify.toast.show(isNew ? "Promotion created" : "Promotion saved");
       navigate("/app/promotions");
     } else if (fetcher.data?.error) {
-      shopify.toast.show(fetcher.data.error, { isError: true });
+      // A problem with one field is shown under that field, not as a toast.
+      if (!fetcher.data.field) shopify.toast.show(fetcher.data.error, { isError: true });
     }
   }, [fetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -102,6 +109,11 @@ export default function FreeGiftForm() {
   }
 
   const isSaving = fetcher.state !== "idle";
+
+  // Shopify only stacks two product discounts when BOTH allow it; otherwise it
+  // keeps one and drops the other, and the "free" gift is charged in full.
+  const giftCombines = Boolean(form.combinesWith.productDiscounts);
+  const nonCombining = (otherActive ?? []).filter((r) => !giftCombines || !r.productDiscounts);
 
   return (
     <s-page heading={isNew ? "Create free gift" : `Edit: ${rule.name}`}>
@@ -150,6 +162,7 @@ export default function FreeGiftForm() {
               label="Discount code"
               value={form.code}
               required
+              error={fetcher.data?.field === "code" ? fetcher.data.error : undefined}
               onChange={(e) => set({ code: e.target.value.toUpperCase() })}
             />
           )}
@@ -195,6 +208,16 @@ export default function FreeGiftForm() {
 
       <s-section heading="Combine with other discounts">
         <s-stack direction="block" gap="tight">
+          {nonCombining.length > 0 && (
+            <s-banner tone="warning" heading="The gift may not be free alongside your other promotions">
+              <s-paragraph>
+                Shopify only applies two product discounts together when both are set to combine with product
+                discounts. If they can't combine, it keeps one and drops the other, so customers could be shown
+                the gift as free and then charged for it. To fix this, tick "Product discounts" here and on:{" "}
+                {nonCombining.map((r) => r.name).join(", ")}.
+              </s-paragraph>
+            </s-banner>
+          )}
           <s-checkbox
             label="Product discounts"
             checked={form.combinesWith.productDiscounts}

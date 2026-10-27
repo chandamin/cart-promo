@@ -245,6 +245,40 @@ export async function getRule(shop, id) {
   return rule;
 }
 
+/** An error about one form field, so the admin can show it under that field. */
+export class RuleFieldError extends Error {
+  constructor(field, message) {
+    super(message);
+    this.name = "RuleFieldError";
+    this.field = field;
+  }
+}
+
+/** Validates `input` and returns the database fields for it, without saving anything. */
+export function prepareRecord(shop, input) {
+  const record = { ...input, shop };
+  validateRuleInput(record);
+  return toRecord(record);
+}
+
+export async function insertRecord(record) {
+  return prisma.promotionRule.create({ data: record });
+}
+
+/** Writes just the given fields of a rule. */
+export async function patchRule(shop, id, data) {
+  await getRule(shop, id);
+  return prisma.promotionRule.update({ where: { id }, data });
+}
+
+/** The other rule of this shop that already uses `code` (ignoring case), if any. */
+export async function findRuleWithCode(shop, code, excludeId = null) {
+  const wanted = String(code ?? "").trim().toLowerCase();
+  if (!wanted) return null;
+  const rules = await prisma.promotionRule.findMany({ where: { shop, code: { not: null } } });
+  return rules.find((rule) => rule.id !== excludeId && String(rule.code).trim().toLowerCase() === wanted) ?? null;
+}
+
 export async function createRule(shop, input) {
   const record = { ...input, shop };
   validateRuleInput(record);

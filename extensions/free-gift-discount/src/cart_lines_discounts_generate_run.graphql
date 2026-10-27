@@ -23,6 +23,9 @@ query CartInput($triggerCollectionIds: [ID!]) {
       }
     }
   }
+  enteredDiscountCodes {
+    code
+  }
   discount {
     discountClasses
     metafield(namespace: "$app:cartpromo", key: "free-gift-config") {

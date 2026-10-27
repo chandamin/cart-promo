@@ -15,6 +15,7 @@
     button_text: "Add to cart",
     adding_text: "Adding…",
     continue_text: "Continue shopping",
+    reclaim_text: "You've unlocked a free gift – choose it",
     background_color: "#FAF6EF",
     eyebrow_color: "#B08D57",
     heading_color: "#2B2620",
@@ -25,6 +26,9 @@
     overlay_opacity: 50,
     corner_radius: 4,
     cart_refresh: "auto",
+    show_code_field: true,
+    code_placeholder: "Discount or gift code",
+    code_button_text: "Apply",
   };
 
   function getRootEl() {
@@ -106,6 +110,14 @@
     }
   }
 
+  function clearDismissal(ruleId) {
+    try {
+      window.localStorage.removeItem(dismissStorageKey(ruleId));
+    } catch (e) {
+      // Storage unavailable: nothing was remembered anyway.
+    }
+  }
+
   function fetchQualifyingRules(cart) {
     var params = new URLSearchParams();
     params.set("lines", JSON.stringify(linesPayload(cart)));
@@ -162,6 +174,14 @@
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ id: line.key, quantity: 0 }),
+    });
+  }
+
+  function setLineQuantity(line, quantity) {
+    return nativeFetch("/cart/change.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ id: line.key, quantity: quantity }),
     });
   }
 
@@ -452,6 +472,16 @@
     }
   }
 
+  // The rule a gift line belongs to: its property holds the rule id, or (lines
+  // added before that) the variant gid.
+  function ruleIdOfLine(line, qualifying) {
+    var tag = line.properties[PROPERTY_KEY];
+    for (var i = 0; i < qualifying.length; i++) {
+      if (qualifying[i].ruleId === tag) return tag;
+    }
+    return findRuleIdForVariant(qualifying, toGid("ProductVariant", line.variant_id)) || tag;
+  }
+
   function sync() {
     // A cart change during a running sync must not be lost: re-run afterwards.
     if (syncing) {
@@ -467,32 +497,55 @@
       })
       .then(function (data) {
         var cart = data.cart;
-        var qualifyingRuleIds = data.result.qualifying.map(function (q) {
+        var qualifying = data.result.qualifying;
+        var qualifyingRuleIds = qualifying.map(function (q) {
           return q.ruleId;
         });
         var giftLines = currentGiftLines(cart);
 
-        var staleLines = giftLines.filter(function (line) {
+        // 1. Gift lines whose rule no longer qualifies leave the cart.
+        var toRemove = giftLines.filter(function (line) {
           var ruleId = line.properties[PROPERTY_KEY];
           if (qualifyingRuleIds.indexOf(ruleId) !== -1) return false;
           // Lines added before the property held the rule id stored the variant gid.
-          return !findRuleIdForVariant(data.result.qualifying, toGid("ProductVariant", line.variant_id));
+          return !findRuleIdForVariant(qualifying, toGid("ProductVariant", line.variant_id));
         });
 
-        var toRemove = staleLines.slice();
-        var showFor = null;
+        // 2. One gift line, one unit, per rule. The Function never discounts
+        // more than that, so anything extra would be a paid "gift": drop the
+        // additional lines and put the kept line back to quantity 1.
+        var kept = {};
+        var toResetQuantity = [];
+        giftLines.forEach(function (line) {
+          if (toRemove.indexOf(line) !== -1) return;
+          var ruleId = ruleIdOfLine(line, qualifying);
+          if (kept[ruleId]) {
+            toRemove.push(line);
+            return;
+          }
+          kept[ruleId] = line;
+          if (line.quantity > 1) toResetQuantity.push(line);
+        });
 
-        // Never auto-add: a qualifying gift always waits for the customer to
-        // confirm via the modal, whether there's one option or several.
-        data.result.qualifying.forEach(function (q) {
-          var alreadyHasOne = q.gifts.some(function (g) {
-            return giftLines.some(function (line) {
-              return line.variant_id === Number(g.variantId.split("/").pop());
-            });
-          });
-          // Declined for this exact cart: wait for a product change.
-          if (alreadyHasOne || showFor || isDismissed(q.ruleId, cart)) return;
-          showFor = q;
+        // 3. What to offer: a single-gift rule is added automatically, a rule
+        // with several gifts asks the customer to choose.
+        var showFor = null;
+        var reclaim = null;
+        var autoAdd = [];
+        qualifying.forEach(function (q) {
+          var alreadyHasOne = !!kept[q.ruleId];
+          if (alreadyHasOne) return;
+          // Declined (or removed by the customer) for this exact cart: wait for
+          // a product change, but keep a way back to the gift.
+          if (isDismissed(q.ruleId, cart)) {
+            if (!reclaim) reclaim = q;
+            return;
+          }
+          if (q.gifts.length === 1) {
+            autoAdd.push(q);
+          } else if (!showFor) {
+            showFor = q;
+          }
         });
 
         var chain = Promise.resolve();
@@ -501,8 +554,32 @@
             return removeLine(line);
           });
         });
+        toResetQuantity.forEach(function (line) {
+          chain = chain.then(function () {
+            return setLineQuantity(line, 1);
+          });
+        });
+        var added = false;
+        autoAdd.forEach(function (q) {
+          chain = chain.then(function () {
+            // Remembered like a dismissal, whether or not the add works: if the
+            // customer deletes the gift (or it can't be added) it isn't re-added
+            // in a loop until the cart's products change.
+            rememberDismissal(q.ruleId, cart);
+            return addGift(q.gifts[0].variantId, q.ruleId)
+              .then(function () {
+                added = true;
+              })
+              .catch(function () {});
+          });
+        });
         return chain.then(function () {
-          return { changed: toRemove.length > 0, showFor: showFor, cart: cart };
+          return {
+            changed: toRemove.length > 0 || toResetQuantity.length > 0 || added,
+            showFor: showFor,
+            reclaim: reclaim,
+            cart: cart,
+          };
         });
       })
       .then(function (outcome) {
@@ -512,6 +589,7 @@
           showModal(
             outcome.showFor,
             function (variantId) {
+              clearDismissal(ruleId);
               return addGift(variantId, ruleId).then(function () {
                 closeModal();
                 return refreshCartUI().then(sync);
@@ -519,11 +597,13 @@
             },
             function () {
               rememberDismissal(ruleId, outcome.cart);
+              debouncedSync();
             },
           );
         } else {
           closeModal();
         }
+        showReclaimLink(outcome.showFor ? null : outcome.reclaim);
         if (outcome.changed) {
           refreshCartUI();
         }
@@ -531,6 +611,165 @@
       .catch(function () {
         finishSync();
       });
+  }
+
+  // --- Way back to a gift the customer dismissed or removed ------------------
+  var reclaimRoot = null;
+
+  function showReclaimLink(q) {
+    if (!q) {
+      if (reclaimRoot) {
+        reclaimRoot.remove();
+        reclaimRoot = null;
+      }
+      return;
+    }
+    if (reclaimRoot && reclaimRoot.getAttribute("data-rule") === q.ruleId) return;
+    if (reclaimRoot) reclaimRoot.remove();
+
+    var s = getSettings();
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("data-cartpromo-reclaim", "");
+    btn.setAttribute("data-rule", q.ruleId);
+    btn.textContent = s.reclaim_text;
+    btn.addEventListener("click", function () {
+      clearDismissal(q.ruleId);
+      sync();
+    });
+
+    // A theme can place the link itself with an element carrying
+    // data-cartpromo-gift-slot (e.g. inside its cart drawer); otherwise it
+    // floats at the bottom of the screen, which works in every theme.
+    var slot = document.querySelector("[data-cartpromo-gift-slot]");
+    if (slot) {
+      btn.style.cssText =
+        "border:none;background:none;padding:0;color:" +
+        s.eyebrow_color +
+        ";text-decoration:underline;font-size:14px;cursor:pointer;";
+      slot.appendChild(btn);
+      reclaimRoot = btn;
+    } else {
+      btn.style.cssText =
+        "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9990;max-width:calc(100vw - 32px);" +
+        "padding:10px 18px;border:none;border-radius:" +
+        Math.max(s.corner_radius, 4) +
+        "px;background:" +
+        s.button_background_color +
+        ";color:" +
+        s.button_text_color +
+        ";font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.25);";
+      document.body.appendChild(btn);
+      reclaimRoot = btn;
+    }
+  }
+
+  // --- Gift code field --------------------------------------------------------
+  // Checkout only accepts a code once the cart holds something it discounts, and
+  // the gift is added from here (the storefront), not from checkout. So the
+  // code is entered on the cart: /discount/CODE puts it on the cart, then sync()
+  // sees it among cart.discount_codes and adds the gift.
+  var codeRoot = null;
+
+  function applyGiftCode(code, setMessage) {
+    setMessage("");
+    return nativeFetch("/discount/" + encodeURIComponent(code), { credentials: "same-origin" })
+      .then(function () {
+        return fetchCart();
+      })
+      .then(function (cart) {
+        var onCart = (cart.discount_codes || []).some(function (d) {
+          return d.code.toUpperCase() === code.toUpperCase();
+        });
+        if (!onCart) {
+          setMessage("This code isn't valid.", true);
+          return;
+        }
+        sync();
+        // The gift is added by sync(); give it a moment, then say how it went.
+        setTimeout(function () {
+          fetchCart().then(function (latest) {
+            var entry = (latest.discount_codes || []).filter(function (d) {
+              return d.code.toUpperCase() === code.toUpperCase();
+            })[0];
+            if (entry && entry.applicable) {
+              setMessage("Code applied.");
+              refreshCartUI();
+            } else {
+              setMessage("This code doesn't apply to your cart yet.", true);
+            }
+          });
+        }, 1500);
+      })
+      .catch(function () {
+        setMessage("Couldn't apply the code. Try again.", true);
+      });
+  }
+
+  function renderCodeField() {
+    if (codeRoot && document.body.contains(codeRoot)) return;
+    var s = getSettings();
+    if (s.show_code_field === false || s.show_code_field === "false") return;
+
+    var slot = document.querySelector("[data-cartpromo-code-slot]");
+    var onCartPage = /\/cart\/?$/.test(window.location.pathname);
+    var checkoutButton = document.querySelector('form[action$="/cart"] [name="checkout"], form[action$="/cart"] button[type="submit"]');
+    if (!slot && !(onCartPage && checkoutButton)) return;
+
+    var wrap = document.createElement("div");
+    wrap.setAttribute("data-cartpromo-code", "");
+    wrap.style.cssText = "margin:12px 0;max-width:420px;";
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = s.code_placeholder || "Discount or gift code";
+    input.setAttribute("aria-label", input.placeholder);
+    input.style.cssText = "flex:1;min-width:0;padding:10px 12px;border:1px solid #bbb;border-radius:4px;font-size:14px;";
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = s.code_button_text || "Apply";
+    button.style.cssText =
+      "padding:10px 16px;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:600;background:" +
+      s.button_background_color +
+      ";color:" +
+      s.button_text_color +
+      ";";
+    var message = document.createElement("div");
+    message.style.cssText = "margin-top:6px;font-size:13px;";
+    message.setAttribute("role", "status");
+
+    function setMessage(text, isError) {
+      message.textContent = text;
+      message.style.color = isError ? "#b3261e" : "#2e7d32";
+    }
+    function submit() {
+      var code = input.value.trim();
+      if (!code) return;
+      button.disabled = true;
+      applyGiftCode(code, setMessage).then(function () {
+        button.disabled = false;
+      });
+    }
+    button.addEventListener("click", submit);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+      }
+    });
+
+    row.appendChild(input);
+    row.appendChild(button);
+    wrap.appendChild(row);
+    wrap.appendChild(message);
+
+    if (slot) {
+      slot.appendChild(wrap);
+    } else {
+      checkoutButton.parentNode.insertBefore(wrap, checkoutButton);
+    }
+    codeRoot = wrap;
   }
 
   function findRuleIdForVariant(qualifying, variantId) {
@@ -552,11 +791,13 @@
 
   var debouncedSync = debounce(sync, 300);
 
+  var CART_MUTATION = /\/cart\/(add|change|update|clear)(\.js)?(\?|$|\/)/;
+
   // Patch fetch to catch AJAX cart mutations regardless of theme.
   var originalFetch = window.fetch;
   window.fetch = function (input, init) {
-    var url = typeof input === "string" ? input : input && input.url;
-    var isCartMutation = url && /\/cart\/(add|change|update|clear)(\.js)?/.test(url);
+    var url = typeof input === "string" ? input : input && (input.url || input.href);
+    var isCartMutation = url && CART_MUTATION.test(url);
     var result = originalFetch.call(this, input, init);
     if (isCartMutation) {
       result.then(function () {
@@ -566,11 +807,47 @@
     return result;
   };
 
+  // Older themes and other apps change the cart with XMLHttpRequest, which the
+  // fetch patch can't see; without this a gift that stopped qualifying stayed
+  // in the cart at full price until the next page load.
+  if (window.XMLHttpRequest) {
+    var xhrOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      try {
+        this.__cartpromoMutation = CART_MUTATION.test(String(url));
+      } catch (e) {
+        this.__cartpromoMutation = false;
+      }
+      return xhrOpen.apply(this, arguments);
+    };
+    var xhrSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function () {
+      if (this.__cartpromoMutation) {
+        this.addEventListener("loadend", function () {
+          debouncedSync();
+        });
+      }
+      return xhrSend.apply(this, arguments);
+    };
+  }
+
   function onThemeCartEvent() {
     if (!emittingThemeEvents) debouncedSync();
   }
   document.addEventListener("cart:updated", onThemeCartEvent);
   document.addEventListener("cart:refresh", onThemeCartEvent);
+  // Back/forward cache restores and returning to the tab: the cart may have
+  // been changed elsewhere (another tab, a form post) while this page slept.
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted) debouncedSync();
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") debouncedSync();
+  });
   document.addEventListener("DOMContentLoaded", sync);
-  if (document.readyState !== "loading") sync();
+  document.addEventListener("DOMContentLoaded", renderCodeField);
+  if (document.readyState !== "loading") {
+    sync();
+    renderCodeField();
+  }
 })();

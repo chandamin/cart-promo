@@ -113,7 +113,7 @@ export function ConditionPicker({
       {showMatch && conditions.length > 1 && (
         <s-select
           label="Match"
-          details="ANY: cart needs at least one of the items below. ALL: cart needs every item below."
+          details="ANY: cart needs at least one of the items above. ALL: cart needs every item above."
           value={matchMode}
           onChange={(e) => onMatchModeChange(e.target.value)}
         >
