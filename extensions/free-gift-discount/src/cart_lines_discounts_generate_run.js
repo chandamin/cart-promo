@@ -5,8 +5,6 @@ import { DiscountClass, ProductDiscountSelectionStrategy } from "../generated/ap
  * @typedef {import("../generated/api").CartLinesDiscountsGenerateRunResult} CartLinesDiscountsGenerateRunResult
  */
 
-const PLACEHOLDER_PERCENTAGE = 0.01;
-
 /**
  * Config JSON shape written by app/services/shopifyDiscounts.server.js onto
  * the discount's `$app:cartpromo` / `free-gift-config` metafield:
@@ -66,29 +64,8 @@ export function cartLinesDiscountsGenerateRun(input) {
   // Do NOT return `enteredDiscountCodesAccept` here. For a code discount the
   // triggering code is already implicitly accepted, and returning the accept
   // operation makes Shopify reject the output (InvalidOutputError).
-  // A code that discounts nothing is rejected by checkout, so the gift could
-  // never be added by the code that unlocks it. While a code is entered, give a
-  // token discount (PLACEHOLDER_PERCENTAGE) on a qualifying line so the code is
-  // accepted; the checkout extension then adds the gift, which turns 100% free.
   if (!giftLines.length) {
-    const [target] = otherLines;
-    if (!input.enteredDiscountCodes?.length || !target) return { operations: [] };
-    return {
-      operations: [
-        {
-          productDiscountsAdd: {
-            candidates: [
-              {
-                message: config.label || "Free gift",
-                targets: [{ cartLine: { id: target.id } }],
-                value: { percentage: { value: PLACEHOLDER_PERCENTAGE } },
-              },
-            ],
-            selectionStrategy: ProductDiscountSelectionStrategy.First,
-          },
-        },
-      ],
-    };
+    return { operations: [] };
   }
 
   // One unit of one gift per rule, however many gift lines or units the cart

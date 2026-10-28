@@ -52,16 +52,8 @@ describe("free gift discount", () => {
   });
 
   describe("code entered before the gift is in the cart", () => {
-    it("gives a token discount so checkout accepts the code (never enteredDiscountCodesAccept, which is invalid output)", () => {
-      const { operations } = run({ lines: [snowboard], entered: ["TEST"] });
-      expect(operations).toHaveLength(1);
-      const candidate = operations[0].productDiscountsAdd.candidates[0];
-      expect(candidate.value).toEqual({ percentage: { value: 0.01 } });
-      expect(candidate.targets).toEqual([{ cartLine: { id: "l1" } }]);
-    });
-
-    it("does nothing when no code was entered", () => {
-      expect(run({ lines: [snowboard], entered: [] }).operations).toEqual([]);
+    it("returns no operations (never enteredDiscountCodesAccept, which is invalid output)", () => {
+      expect(run({ lines: [snowboard], entered: ["TEST"] }).operations).toEqual([]);
     });
 
     it("does not count the gift itself towards the conditions", () => {
