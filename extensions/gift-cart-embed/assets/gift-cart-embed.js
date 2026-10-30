@@ -615,8 +615,36 @@
 
   // --- Way back to a gift the customer dismissed or removed ------------------
   var reclaimRoot = null;
+  var reclaimRule = null;
+  var drawerObserver = null;
+
+  function visible(el) {
+    return !!el && (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
+  }
+
+  function findReclaimSlot() {
+    var marked = document.querySelector("[data-cartpromo-gift-slot]");
+    if (marked) return marked;
+    var pageFooter = document.querySelector(".cart__footer, #main-cart-footer");
+    if (visible(pageFooter)) return pageFooter;
+    return document.querySelector("cart-drawer .cart-drawer__footer, cart-drawer .drawer__footer");
+  }
+
+  // Dawn swaps the drawer's contents when it opens or the cart changes; the
+  // link is put back right after, so it is there whenever the drawer is open.
+  function watchDrawerForReclaim() {
+    var drawer = document.querySelector("cart-drawer");
+    if (drawerObserver || !drawer || !window.MutationObserver) return;
+    drawerObserver = new MutationObserver(function () {
+      if (reclaimRule && !(reclaimRoot && document.body.contains(reclaimRoot))) {
+        showReclaimLink(reclaimRule);
+      }
+    });
+    drawerObserver.observe(drawer, { childList: true, subtree: true });
+  }
 
   function showReclaimLink(q) {
+    reclaimRule = q;
     if (!q) {
       if (reclaimRoot) {
         reclaimRoot.remove();
@@ -624,7 +652,8 @@
       }
       return;
     }
-    if (reclaimRoot && reclaimRoot.getAttribute("data-rule") === q.ruleId) return;
+    // The theme re-renders its drawer, which drops the link: put it back.
+    if (reclaimRoot && reclaimRoot.getAttribute("data-rule") === q.ruleId && document.body.contains(reclaimRoot)) return;
     if (reclaimRoot) reclaimRoot.remove();
 
     var s = getSettings();
@@ -638,17 +667,20 @@
       sync();
     });
 
-    // A theme can place the link itself with an element carrying
-    // data-cartpromo-gift-slot (e.g. inside its cart drawer); otherwise it
-    // floats at the bottom of the screen, which works in every theme.
-    var slot = document.querySelector("[data-cartpromo-gift-slot]");
+    // Inside the cart where the customer is looking: an element the theme
+    // marks with data-cartpromo-gift-slot, else the footer of the cart page or
+    // the cart drawer (Dawn and themes built on it), above the subtotal.
+    // Only when none exists does it float at the bottom of the screen.
+    var slot = findReclaimSlot();
     if (slot) {
       btn.style.cssText =
-        "border:none;background:none;padding:0;color:" +
+        "display:block;border:none;background:none;padding:0 0 12px;color:" +
         s.eyebrow_color +
         ";text-decoration:underline;font-size:14px;cursor:pointer;";
-      slot.appendChild(btn);
+      if (slot.hasAttribute("data-cartpromo-gift-slot")) slot.appendChild(btn);
+      else slot.insertBefore(btn, slot.firstChild);
       reclaimRoot = btn;
+      watchDrawerForReclaim();
     } else {
       btn.style.cssText =
         "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9990;max-width:calc(100vw - 32px);" +

@@ -329,8 +329,9 @@ export async function disableRuleByShopifyDiscountId(shop, shopifyDiscountId) {
 
 /**
  * The reverse: a discount reactivated on Shopify's discount page re-enables
- * the rule. Only rules disabled by the step above can match, because a rule
- * disabled in the app has no discount id (its discount is deleted).
+ * the rule. A rule paused in the app keeps its (deactivated) discount id, so
+ * activating that discount on Shopify re-enables it too: the rule and the
+ * discount are the same thing.
  */
 export async function enableRuleByShopifyDiscountId(shop, shopifyDiscountId) {
   return prisma.promotionRule.updateMany({

@@ -145,6 +145,12 @@ export default function TieredDiscountForm() {
         Save
       </s-button>
 
+      {isSaving && !isNew && rule.discountMethod !== form.discountMethod && (
+        <s-banner tone="info" heading="Recreating the discount in Shopify…">
+          Switching between a code and an automatic discount can take up to a minute. Please do not click Save again.
+        </s-banner>
+      )}
+
       <s-section heading="Details">
         <s-stack direction="block" gap="base">
           <s-text-field

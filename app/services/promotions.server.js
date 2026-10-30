@@ -20,6 +20,7 @@ import {
   setStatus,
 } from "./promotionRules.server";
 import {
+  deactivateShopifyDiscount,
   fetchDiscountStates,
   findDiscountIdByCode,
   removeShopifyDiscount,
@@ -74,7 +75,10 @@ async function applyChange(admin, shop, existing, fields) {
   const next = { ...existing, ...fields };
 
   if (next.status === "ACTIVE") {
-    const { discountId, staleDiscountId } = await syncShopifyDiscount(admin, next);
+    // Coming back from DISABLED: the same discount is activated again.
+    const { discountId, staleDiscountId } = await syncShopifyDiscount(admin, next, {
+      reactivate: existing.status === "DISABLED",
+    });
     let saved;
     try {
       saved = await patchRule(shop, existing.id, { ...fields, shopifyDiscountId: discountId });
@@ -91,7 +95,20 @@ async function applyChange(admin, shop, existing, fields) {
     return saved;
   }
 
-  // Turning off (or saving a draft): the discount goes, the rule stays.
+  // Pausing: the discount is deactivated, not deleted, so Enable brings back
+  // the very same Shopify discount. Deactivating doesn't fire discounts/delete,
+  // so the status can follow the Shopify call.
+  if (next.status === "DISABLED") {
+    // Already paused: its discount is already deactivated, so only the record changes.
+    if (existing.status === "DISABLED") return patchRule(shop, existing.id, fields);
+    const kept = await deactivateShopifyDiscount(admin, existing);
+    return patchRule(shop, existing.id, {
+      ...fields,
+      shopifyDiscountId: kept ? existing.shopifyDiscountId : null,
+    });
+  }
+
+  // Saving a draft: the discount goes, the rule stays.
   if (existing.status === "ACTIVE") {
     await patchRule(shop, existing.id, { status: next.status });
   }

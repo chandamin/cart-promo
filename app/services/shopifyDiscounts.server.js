@@ -207,6 +207,44 @@ const CODE_DELETE = `#graphql
   }
 `;
 
+// Pausing a rule deactivates its discount instead of deleting it, so the same
+// Shopify discount (and its usage and sales history) is there when it's enabled.
+const AUTOMATIC_ACTIVATE = `#graphql
+  mutation cartPromoAutomaticActivate($id: ID!) {
+    discountAutomaticActivate(id: $id) {
+      automaticDiscountNode { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+const AUTOMATIC_DEACTIVATE = `#graphql
+  mutation cartPromoAutomaticDeactivate($id: ID!) {
+    discountAutomaticDeactivate(id: $id) {
+      automaticDiscountNode { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+const CODE_ACTIVATE = `#graphql
+  mutation cartPromoCodeActivate($id: ID!) {
+    discountCodeActivate(id: $id) {
+      codeDiscountNode { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+const CODE_DEACTIVATE = `#graphql
+  mutation cartPromoCodeDeactivate($id: ID!) {
+    discountCodeDeactivate(id: $id) {
+      codeDiscountNode { id }
+      userErrors { field message }
+    }
+  }
+`;
+
 async function run(admin, query, variables) {
   const response = await admin.graphql(query, { variables });
   const json = await response.json();
@@ -241,8 +279,11 @@ function discountKind(discountId) {
  * failure anywhere before that leaves the old discount and stored id untouched.
  *
  * For a non-ACTIVE rule nothing is created; use removeShopifyDiscount.
+ *
+ * `reactivate` is for a rule coming back from DISABLED: its discount was
+ * deactivated (not deleted), so the same one is activated again.
  */
-export async function syncShopifyDiscount(admin, rule) {
+export async function syncShopifyDiscount(admin, rule, { reactivate = false } = {}) {
   if (rule.status !== "ACTIVE") {
     return { discountId: rule.shopifyDiscountId ?? null, staleDiscountId: null };
   }
@@ -277,6 +318,9 @@ export async function syncShopifyDiscount(admin, rule) {
 
   if (existingId) {
     try {
+      // Activating clears the end date, so it goes before the update, which
+      // writes the rule's own schedule back.
+      if (reactivate) await run(admin, isCode ? CODE_ACTIVATE : AUTOMATIC_ACTIVATE, { id: existingId });
       return { discountId: pick(await run(admin, updateMutation, { id: existingId, discount: discountInput })), staleDiscountId };
     } catch (error) {
       // Stale id that slipped past the existence check: replace it.
@@ -284,6 +328,26 @@ export async function syncShopifyDiscount(admin, rule) {
     }
   }
   return { discountId: pick(await run(admin, createMutation, { discount: discountInput })), staleDiscountId };
+}
+
+/**
+ * Deactivates the rule's discount without deleting it. Resolves to true when
+ * the discount is kept (the caller keeps its id), false when it is already gone
+ * from Shopify (the caller drops the id).
+ */
+export async function deactivateShopifyDiscount(admin, rule) {
+  const discountId = rule.shopifyDiscountId;
+  if (!discountId) return false;
+  if ((await findMissingDiscountIds(admin, [discountId])).length) return false;
+
+  const kind = discountKind(discountId) ?? rule.discountMethod;
+  try {
+    await run(admin, kind === "CODE" ? CODE_DEACTIVATE : AUTOMATIC_DEACTIVATE, { id: discountId });
+    return true;
+  } catch (error) {
+    if (isMissingDiscountError(error)) return false;
+    throw error;
+  }
 }
 
 /** Does a Shopify discount already use this code? Resolves to its gid, or null. */
