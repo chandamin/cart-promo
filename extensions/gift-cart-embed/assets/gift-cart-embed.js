@@ -630,15 +630,20 @@
     return document.querySelector("cart-drawer .cart-drawer__footer, cart-drawer .drawer__footer");
   }
 
+  // The link is missing (the theme re-rendered its drawer), or it is only
+  // floating because the footer wasn't there yet and the footer has appeared.
+  function reclaimNeedsPlacing() {
+    if (!reclaimRoot || !document.body.contains(reclaimRoot)) return true;
+    return reclaimRoot.hasAttribute("data-cartpromo-floating") && !!findReclaimSlot();
+  }
+
   // Dawn swaps the drawer's contents when it opens or the cart changes; the
   // link is put back right after, so it is there whenever the drawer is open.
   function watchDrawerForReclaim() {
     var drawer = document.querySelector("cart-drawer");
     if (drawerObserver || !drawer || !window.MutationObserver) return;
     drawerObserver = new MutationObserver(function () {
-      if (reclaimRule && !(reclaimRoot && document.body.contains(reclaimRoot))) {
-        showReclaimLink(reclaimRule);
-      }
+      if (reclaimRule && reclaimNeedsPlacing()) showReclaimLink(reclaimRule);
     });
     drawerObserver.observe(drawer, { childList: true, subtree: true });
   }
@@ -653,7 +658,7 @@
       return;
     }
     // The theme re-renders its drawer, which drops the link: put it back.
-    if (reclaimRoot && reclaimRoot.getAttribute("data-rule") === q.ruleId && document.body.contains(reclaimRoot)) return;
+    if (reclaimRoot && reclaimRoot.getAttribute("data-rule") === q.ruleId && !reclaimNeedsPlacing()) return;
     if (reclaimRoot) reclaimRoot.remove();
 
     var s = getSettings();
@@ -682,6 +687,8 @@
       reclaimRoot = btn;
       watchDrawerForReclaim();
     } else {
+      btn.setAttribute("data-cartpromo-floating", "");
+      watchDrawerForReclaim();
       btn.style.cssText =
         "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9990;max-width:calc(100vw - 32px);" +
         "padding:10px 18px;border:none;border-radius:" +
