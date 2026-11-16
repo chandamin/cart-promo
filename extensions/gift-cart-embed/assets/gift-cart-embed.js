@@ -26,6 +26,7 @@
     overlay_opacity: 50,
     corner_radius: 4,
     cart_refresh: "auto",
+    confirm_single_gift: true,
     show_code_field: true,
     code_placeholder: "Discount or gift code",
     code_button_text: "Apply",
@@ -532,6 +533,8 @@
         var showFor = null;
         var reclaim = null;
         var autoAdd = [];
+        // A single gift is added without asking unless the merchant wants the popup for it too.
+        var confirmSingleGift = getSettings().confirm_single_gift !== false;
         qualifying.forEach(function (q) {
           var alreadyHasOne = !!kept[q.ruleId];
           if (alreadyHasOne) return;
@@ -541,7 +544,7 @@
             if (!reclaim) reclaim = q;
             return;
           }
-          if (q.gifts.length === 1) {
+          if (q.gifts.length === 1 && !confirmSingleGift) {
             autoAdd.push(q);
           } else if (!showFor) {
             showFor = q;
