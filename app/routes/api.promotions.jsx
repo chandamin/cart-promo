@@ -1,4 +1,4 @@
-import { authenticateApi, resolveShops, runAcrossShops } from "../services/masterApi.server";
+import { adminForShop, authenticateApi, resolveShops, runAcrossShops } from "../services/masterApi.server";
 import { handleApiRequest, jsonError, readJsonObject, serializeRule } from "../services/promotionsApi.server";
 import {
   applyToMatching,
@@ -12,6 +12,9 @@ import {
  * Per-shop key (Authorization: Bearer cp_…) — acts on that key's own shop:
  *   GET  /api/promotions   list, optional ?type=&status=
  *   POST /api/promotions   create (`type`, `name` and `config` are required)
+ *   POST | PATCH | PUT /api/promotions with an `id` (in the body, or ?id=) edits that
+ *     promotion instead: the same fields as create, send only the ones to change.
+ *     The master key must also name the one store it belongs to (?shop= or `shop`).
  *
  * Master key (Authorization: Bearer <API_MASTER_KEY>) — acts on many shops in
  * one call. Say which with ?shop=all or ?shop=a.myshopify.com,b.myshopify.com
@@ -51,13 +54,32 @@ export const loader = ({ request }) =>
     return Response.json({ promotions: rules.map(serializeRule) });
   });
 
+/** Edits the one promotion `id` names, with the same fields create takes. */
+async function editOne(auth, url, body, id) {
+  if (!auth.master) return Response.json(await updatePromotion(auth.admin, auth.shop, id, body));
+
+  const selector = url.searchParams.get("shop") ?? body.shop ?? "";
+  if (typeof selector !== "string" || !selector || /^\s*(all|\*)\s*$/i.test(selector) || selector.includes(",")) {
+    throw jsonError(400, "A single promotion belongs to one store: use shop=<store>.myshopify.com.");
+  }
+  const [shop] = await resolveShops(selector);
+  return Response.json(await updatePromotion(await adminForShop(shop), shop, id, body));
+}
+
 export const action = ({ request }) =>
   handleApiRequest(request, async () => {
     const auth = await authenticateApi(request);
     const url = new URL(request.url);
 
+    // The body is read once: an `id` in it (or ?id=) turns a write into an edit of that promotion.
+    let body = null;
+    if (["POST", "PATCH", "PUT"].includes(request.method)) {
+      body = await readJsonObject(request);
+      const id = url.searchParams.get("id") ?? body.id;
+      if (id) return editOne(auth, url, body, String(id));
+    }
+
     if (request.method === "POST") {
-      const body = await readJsonObject(request);
       if (auth.master) {
         const shops = await resolveShops(url.searchParams.get("shop") ?? body.shop ?? body.shops);
         const result = await runAcrossShops(shops, ({ shop, admin }) => createPromotion(admin, shop, body));
@@ -76,7 +98,7 @@ export const action = ({ request }) =>
       }
       const dryRun = url.searchParams.get("dryRun") === "true";
       const shops = await resolveShops(url.searchParams.get("shop"));
-      const patch = request.method === "DELETE" ? null : await readJsonObject(request);
+      const patch = request.method === "DELETE" ? null : body;
 
       return Response.json(
         await runAcrossShops(shops, ({ shop, admin }) =>
@@ -93,6 +115,6 @@ export const action = ({ request }) =>
       405,
       auth.master
         ? "Method not allowed. Use GET, POST, PATCH, PUT or DELETE."
-        : "Method not allowed. Use GET or POST here, or PATCH/DELETE on /api/promotions/:id.",
+        : "Method not allowed. Use GET or POST here (POST/PATCH with an `id` edits), or PATCH/DELETE on /api/promotions/:id.",
     );
   });

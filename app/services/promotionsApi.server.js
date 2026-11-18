@@ -151,12 +151,23 @@ export async function readJsonObject(request) {
   return body;
 }
 
+const isPlainObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+
 /** Applies a partial update onto an existing rule, producing a full rule input. */
 export function mergeRuleUpdate(existing, patch) {
   const input = Object.fromEntries(UPDATABLE_FIELDS.map((field) => [field, existing[field]]));
   input.type = existing.type;
+  // Sending the rule's own type back (e.g. a GET response edited and PATCHed) is fine.
+  if (patch.type != null && patch.type !== existing.type) {
+    throw jsonError(400, `The type of a promotion can't be changed (it is ${existing.type}). Create a new promotion instead.`);
+  }
   for (const field of UPDATABLE_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(patch, field)) input[field] = patch[field];
+  }
+  // `config` is merged key by key, so a partial config changes only what it names
+  // (an array such as `tiers` is replaced whole; send null to clear a key).
+  if (isPlainObject(patch.config) && isPlainObject(existing.config)) {
+    input.config = { ...existing.config, ...patch.config };
   }
   input.config = normalizeConfig(input.config);
   validateEnumFields(input);
