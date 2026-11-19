@@ -1,3 +1,4 @@
+import { withGiftDetails } from "./giftDetails.server";
 import { listActiveRules } from "./promotionRules.server";
 import { reconcileWithShopify } from "./promotions.server";
 
@@ -55,7 +56,11 @@ export async function evaluateGiftRules(admin, shop, cartLines, appliedCodes = [
     }
   }
 
-  return { qualifying: await withSellableGiftsOnly(admin, qualifying), giftVariantIds: [...giftVariantIds] };
+  const offered = await withSellableGiftsOnly(admin, qualifying);
+  // Rules saved through the API before gifts were given a title and image.
+  for (const q of offered) q.gifts = await withGiftDetails(admin, q.gifts);
+
+  return { qualifying: offered, giftVariantIds: [...giftVariantIds] };
 }
 
 /**

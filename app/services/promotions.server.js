@@ -5,6 +5,7 @@
  * service directly, so activation/deactivation behavior stays in one place.
  */
 import { Prisma } from "@prisma/client";
+import { withGiftDetails } from "./giftDetails.server";
 import {
   RuleFieldError,
   RULE_STATUSES,
@@ -43,6 +44,11 @@ const DEFAULT_COMBINES = { orderDiscounts: false, productDiscounts: false, shipp
 export async function saveRule(admin, shop, id, input) {
   // Validates, and returns the fields exactly as they will be stored.
   const record = prepareRecord(shop, input);
+  // A gift saved through the API has no title or image: look them up so the
+  // storefront popup can show the product.
+  if (record.type === "FREE_GIFT") {
+    record.config = { ...record.config, gifts: await withGiftDetails(admin, record.config.gifts) };
+  }
   const existing = id === "new" ? null : await getRule(shop, id);
 
   await assertCodeAvailable(admin, shop, record, existing);
