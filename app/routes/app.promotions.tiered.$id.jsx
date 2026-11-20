@@ -4,7 +4,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { getRule } from "../services/promotionRules.server";
 import { saveRule } from "../services/promotions.server";
-import { fetchShopTimezone } from "../services/shop.server";
+import { fetchShopDomain, fetchShopTimezone } from "../services/shop.server";
 import { ConditionPicker } from "../components/ConditionPicker";
 import {
   ActiveDatesSection,
@@ -14,6 +14,7 @@ import {
   UsageLimitSection,
 } from "../components/RuleConditionSections";
 import { initialSharedFields, serializeRuleForm } from "../utils/ruleForm";
+import { ShareLink } from "../components/ShareLink";
 
 const BLANK_RULE = {
   name: "",
@@ -34,12 +35,15 @@ function blankTier() {
 
 export const loader = async ({ request, params }) => {
   const { session, admin } = await authenticate.admin(request);
-  const timeZone = await fetchShopTimezone(admin);
+  const [timeZone, shopDomain] = await Promise.all([
+    fetchShopTimezone(admin),
+    fetchShopDomain(admin),
+  ]);
   if (params.id === "new") {
-    return { rule: BLANK_RULE, isNew: true, timeZone };
+    return { rule: BLANK_RULE, isNew: true, timeZone, shopDomain };
   }
   const rule = await getRule(session.shop, params.id);
-  return { rule, isNew: false, timeZone };
+  return { rule, isNew: false, timeZone, shopDomain };
 };
 
 export const action = async ({ request, params }) => {
@@ -66,7 +70,7 @@ export const action = async ({ request, params }) => {
 };
 
 export default function TieredDiscountForm() {
-  const { rule, isNew, timeZone } = useLoaderData();
+  const { rule, isNew, timeZone, shopDomain } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -195,6 +199,13 @@ export default function TieredDiscountForm() {
           )}
         </s-stack>
       </s-section>
+
+      <ShareLink
+        shopDomain={shopDomain}
+        code={form.code}
+        status={form.status}
+        isNew={isNew}
+      />
 
       <s-section heading="Cart conditions">
         <s-paragraph tone="subdued">

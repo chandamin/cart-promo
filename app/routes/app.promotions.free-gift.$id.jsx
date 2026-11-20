@@ -4,9 +4,10 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { getRule, listRules } from "../services/promotionRules.server";
 import { saveRule } from "../services/promotions.server";
-import { fetchShopTimezone } from "../services/shop.server";
+import { fetchShopDomain, fetchShopTimezone } from "../services/shop.server";
 import { ConditionPicker } from "../components/ConditionPicker";
 import { GiftPicker } from "../components/GiftPicker";
+import { ShareLink } from "../components/ShareLink";
 import {
   ActiveDatesSection,
   EligibilitySection,
@@ -33,16 +34,19 @@ const BLANK_RULE = {
 
 export const loader = async ({ request, params }) => {
   const { session, admin } = await authenticate.admin(request);
-  const timeZone = await fetchShopTimezone(admin);
+  const [timeZone, shopDomain] = await Promise.all([
+    fetchShopTimezone(admin),
+    fetchShopDomain(admin),
+  ]);
   // Other live rules: whether they combine decides if the gift stays free.
   const otherActive = (await listRules(session.shop))
     .filter((r) => r.status === "ACTIVE" && r.id !== params.id)
     .map((r) => ({ id: r.id, name: r.name, productDiscounts: Boolean(r.combinesWith?.productDiscounts) }));
   if (params.id === "new") {
-    return { rule: BLANK_RULE, isNew: true, timeZone, otherActive };
+    return { rule: BLANK_RULE, isNew: true, timeZone, shopDomain, otherActive };
   }
   const rule = await getRule(session.shop, params.id);
-  return { rule, isNew: false, timeZone, otherActive };
+  return { rule, isNew: false, timeZone, shopDomain, otherActive };
 };
 
 export const action = async ({ request, params }) => {
@@ -61,7 +65,7 @@ export const action = async ({ request, params }) => {
 };
 
 export default function FreeGiftForm() {
-  const { rule, isNew, timeZone, otherActive } = useLoaderData();
+  const { rule, isNew, timeZone, shopDomain, otherActive } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -174,6 +178,13 @@ export default function FreeGiftForm() {
           )}
         </s-stack>
       </s-section>
+
+      <ShareLink
+        shopDomain={shopDomain}
+        code={form.code}
+        status={form.status}
+        isNew={isNew}
+      />
 
       <s-section heading="Cart conditions">
         <s-paragraph tone="subdued">
